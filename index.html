@@ -989,6 +989,10 @@ function openFriends(){
   show(scrFriends);
   renderFriends();
 }
+// フレンド画面を開いている間は5秒ごとに自動更新 (申請が届いたらすぐ表示)
+setInterval(() => {
+  if(myProfile && !scrFriends.classList.contains('hidden')) renderFriends();
+}, 5000);
 
 // ---- オンライン状態 (Realtime Presence) ----
 function startPresence(){
@@ -1088,10 +1092,20 @@ async function renderFriends(){
     row.innerHTML = `<span class="nm">${nameOf(r.requester)}</span>`;
     const ok = document.createElement('button');
     ok.textContent = '承認';
-    ok.onclick = async () => { await sb.from('friendships').update({ status:'accepted' }).eq('id', r.id); renderFriends(); };
+    ok.onclick = async () => {
+      const { error, data } = await sb.from('friendships').update({ status:'accepted' }).eq('id', r.id).select();
+      if(error) friendErr.textContent = '承認エラー: ' + error.message;
+      else if(!data || !data.length) friendErr.textContent = '承認できませんでした (権限エラーの可能性)';
+      else friendErr.textContent = '';
+      renderFriends();
+    };
     const ng = document.createElement('button');
     ng.textContent = '拒否'; ng.className = 'pink';
-    ng.onclick = async () => { await sb.from('friendships').delete().eq('id', r.id); renderFriends(); };
+    ng.onclick = async () => {
+      const { error } = await sb.from('friendships').delete().eq('id', r.id);
+      if(error) friendErr.textContent = '拒否エラー: ' + error.message;
+      renderFriends();
+    };
     row.append(ok, ng);
     pendingListEl.appendChild(row);
   }
