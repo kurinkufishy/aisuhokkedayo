@@ -216,6 +216,7 @@ const guestInput = { x: W/2, y: 140, has:false };
 // ===== ネットワーク =====
 let peer = null, conn = null;
 let lastPing = 0, pingMs = null;
+let pendingInviteTo = null; // 対戦に誘う相手のユーザーID (ルーム作成完了時に招待送信)
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const PEER_PREFIX = 'neonhockey-v1-';
 
@@ -275,6 +276,11 @@ function createRoom(){
     // 登録完了してからコードを表示 (これでゲストが必ず見つけられる)
     roomCodeEl.textContent = code;
     waitStatus.textContent = 'このコードを相手に送ってください';
+    if(pendingInviteTo){
+      sendInviteBroadcast(pendingInviteTo, code);
+      pendingInviteTo = null;
+      waitStatus.textContent = '招待を送りました!相手の参加を待っています...';
+    }
     peer.on('connection', c => {
       if(conn){ c.close(); return; } // 満室
       conn = c;
@@ -926,23 +932,40 @@ document.getElementById('btnAuthSubmit').addEventListener('click', async () => {
     if(name.length < 2){ authErr.textContent = 'ユーザー名は2文字以上で'; return; }
     const { data, error } = await sb.auth.signUp({ email, password: pass });
     if(error){ authErr.textContent = '登録エラー: ' + error.message; return; }
-    // プロフィール作成 (フレンドコードは衝突したら再生成)
-    for(let i = 0; i < 5; i++){
-      const code = Array.from({length:6}, () => CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');
-      const { error: e2 } = await sb.from('profiles').insert({ id: data.user.id, username: name, friend_code: code });
-      if(!e2) break;
-      if(e2.message.includes('username')){ authErr.textContent = 'そのユーザー名は使われています'; return; }
-      if(i === 4){ authErr.textContent = 'プロフィール作成に失敗: ' + e2.message; return; }
+    if(!data.session){
+      authErr.textContent = 'このメールは登録済みのようです。「ログインに切り替え」から同じメール・パスワードでログインしてください';
+      return;
     }
-    await loadMyProfile(data.user.id);
+    const ok = await ensureProfile(data.user.id, name);
+    if(!ok) return;
   } else {
     const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
     if(error){ authErr.textContent = 'ログイン失敗: ' + error.message; return; }
     await loadMyProfile(data.user.id);
+    // プロフィール未作成のアカウント (登録が途中で失敗したケース) を救済
+    if(!myProfile){
+      const name = prompt('ユーザー名を決めてください (2〜16文字)');
+      if(!name || name.trim().length < 2){ authErr.textContent = 'ユーザー名が必要です。もう一度ログインしてください'; return; }
+      const ok = await ensureProfile(data.user.id, name.trim().slice(0, 16));
+      if(!ok) return;
+    }
   }
   updateAuthUI();
   openFriends();
 });
+
+// プロフィール作成 (フレンドコード衝突時は再生成)。成功でtrue
+async function ensureProfile(uid, name){
+  for(let i = 0; i < 5; i++){
+    const code = Array.from({length:6}, () => CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');
+    const { error: e2 } = await sb.from('profiles').insert({ id: uid, username: name, friend_code: code });
+    if(!e2){ await loadMyProfile(uid); return true; }
+    if(e2.message.includes('username')){ authErr.textContent = 'そのユーザー名は使われています。別の名前で'; return false; }
+    if(!e2.message.includes('friend_code')){ authErr.textContent = 'プロフィール作成に失敗: ' + e2.message; return false; }
+  }
+  authErr.textContent = 'コード生成に失敗しました。もう一度試してください';
+  return false;
+}
 
 document.getElementById('btnLogout').addEventListener('click', async () => {
   await sb.auth.signOut();
@@ -977,6 +1000,37 @@ function startPresence(){
   presenceChannel.subscribe(status => {
     if(status === 'SUBSCRIBED') presenceChannel.track({ online_at: Date.now() });
   });
+  startInviteListener();
+}
+
+// ---- 対戦招待 (Realtime Broadcast) ----
+let inviteChannel = null;
+function startInviteListener(){
+  if(inviteChannel) return;
+  inviteChannel = sb.channel('invite-' + myProfile.id);
+  inviteChannel.on('broadcast', { event: 'invite' }, ({ payload }) => {
+    // ゲーム中は無視
+    if(phase !== 'idle') return;
+    if(confirm(`⚔️ ${payload.from} から対戦の招待が届きました!\n参加しますか?`)){
+      show(scrConnecting);
+      joinRoom(payload.code);
+    }
+  });
+  inviteChannel.subscribe();
+}
+function sendInviteBroadcast(targetId, code){
+  const ch = sb.channel('invite-' + targetId);
+  ch.subscribe(status => {
+    if(status === 'SUBSCRIBED'){
+      ch.send({ type: 'broadcast', event: 'invite', payload: { from: myProfile.username, code } });
+      setTimeout(() => sb.removeChannel(ch), 3000); // 送ったら片付ける
+    }
+  });
+}
+function inviteFriend(friendId){
+  pendingInviteTo = friendId;
+  winPoints = 5;
+  createRoom(); // ルーム作成 → コード確定後に自動で招待が飛ぶ
 }
 function onlineIdSet(){
   return new Set(presenceChannel ? Object.keys(presenceChannel.presenceState()) : []);
@@ -1051,9 +1105,16 @@ async function renderFriends(){
   }
   for(const r of accepted){
     const otherId = r.requester === myProfile.id ? r.addressee : r.requester;
+    const isOn = online.has(otherId);
     const row = document.createElement('div');
     row.className = 'frow';
-    row.innerHTML = `<span class="dot ${online.has(otherId) ? 'on' : ''}"></span><span class="nm">${nameOf(otherId)}</span><span class="mini">${online.has(otherId) ? 'オンライン' : 'オフライン'}</span>`;
+    row.innerHTML = `<span class="dot ${isOn ? 'on' : ''}"></span><span class="nm">${nameOf(otherId)}</span><span class="mini">${isOn ? 'オンライン' : 'オフライン'}</span>`;
+    if(isOn){
+      const vs = document.createElement('button');
+      vs.textContent = '⚔️ 対戦';
+      vs.onclick = () => inviteFriend(otherId);
+      row.appendChild(vs);
+    }
     const del = document.createElement('button');
     del.textContent = '削除'; del.className = 'pink';
     del.onclick = async () => { if(confirm(`${nameOf(otherId)} をフレンドから削除する?`)){ await sb.from('friendships').delete().eq('id', r.id); renderFriends(); } };
