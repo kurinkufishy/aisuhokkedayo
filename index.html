@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>NEON HOCKEY ネット対戦</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
+<style>
+  :root{
+    --bg:#0a0e1a;
+    --p1:#00e5ff;
+    --p2:#ff2e88;
+    --puck:#f8f32b;
+    --text:#e8ecff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;user-select:none;-webkit-user-select:none;touch-action:none}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",system-ui,sans-serif;color:var(--text)}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  canvas{display:block;border-radius:14px;box-shadow:0 0 60px rgba(0,229,255,.12),0 0 60px rgba(255,46,136,.12)}
+  .overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:rgba(6,9,18,.9);backdrop-filter:blur(6px);z-index:10;text-align:center;padding:20px}
+  .hidden{display:none!important}
+  h1{font-size:clamp(32px,7vw,60px);letter-spacing:.08em;font-weight:800;
+     background:linear-gradient(90deg,var(--p1),var(--puck),var(--p2));
+     -webkit-background-clip:text;background-clip:text;color:transparent;
+     filter:drop-shadow(0 0 18px rgba(0,229,255,.35))}
+  h2{font-size:clamp(20px,4vw,30px);font-weight:800;letter-spacing:.06em}
+  .sub{font-size:clamp(13px,2.4vw,16px);opacity:.85;line-height:1.9}
+  .kbd{display:inline-block;border:1px solid #3a4a7a;border-radius:6px;padding:1px 8px;margin:0 2px;background:#141d38;font-weight:700;font-size:.9em}
+  button{font-family:inherit;font-size:clamp(15px,3vw,19px);font-weight:800;letter-spacing:.1em;
+    color:#0a0e1a;background:linear-gradient(90deg,var(--p1),#7df9ff);
+    border:none;border-radius:999px;padding:14px 42px;cursor:pointer;
+    box-shadow:0 0 24px rgba(0,229,255,.45);transition:transform .12s}
+  button:active{transform:scale(.95)}
+  button.pink{background:linear-gradient(90deg,var(--p2),#ff7ab5);box-shadow:0 0 24px rgba(255,46,136,.45)}
+  button.ghost{background:#182448;color:var(--text);box-shadow:none;border:1px solid #2c3d6e;font-weight:600}
+  .winner{font-size:clamp(28px,6vw,50px);font-weight:800}
+  .winner.win{color:var(--p1);text-shadow:0 0 22px rgba(0,229,255,.6)}
+  .winner.lose{color:var(--p2);text-shadow:0 0 22px rgba(255,46,136,.6)}
+  .pts{display:flex;gap:12px}
+  .pts button{padding:10px 20px;font-size:14px;background:#182448;color:var(--text);box-shadow:none;border:1px solid #2c3d6e}
+  .pts button.sel{background:linear-gradient(90deg,var(--p1),var(--p2));color:#0a0e1a;font-weight:800}
+  #roomCode{font-size:clamp(40px,10vw,72px);font-weight:800;letter-spacing:.3em;color:var(--puck);
+    text-shadow:0 0 24px rgba(248,243,43,.5);padding-left:.3em}
+  input[type=text]{font-family:inherit;font-size:clamp(26px,7vw,44px);font-weight:800;letter-spacing:.28em;
+    text-align:center;text-transform:uppercase;width:min(320px,80vw);
+    background:#101a36;border:2px solid #2c3d6e;border-radius:14px;color:var(--text);padding:12px;outline:none}
+  input[type=text]:focus{border-color:var(--p1);box-shadow:0 0 16px rgba(0,229,255,.3)}
+  .spin{width:40px;height:40px;border:4px solid #2c3d6e;border-top-color:var(--p1);border-radius:50%;animation:sp 0.9s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .err{color:#ff8080;font-size:14px;min-height:20px}
+  #pingBadge{position:fixed;top:10px;right:12px;z-index:5;font-size:12px;font-weight:700;
+    background:rgba(16,24,48,.8);border:1px solid #2c3d6e;border-radius:999px;padding:4px 12px;opacity:.85}
+  @media (prefers-reduced-motion: reduce){ *{animation:none!important;transition:none!important} }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<div id="pingBadge" class="hidden">-- ms</div>
+
+<!-- タイトル -->
+<div id="scrTitle" class="overlay">
+  <h1>NEON HOCKEY</h1>
+  <div class="sub">ネオン・エアホッケー対戦</div>
+  <button id="btnOnline">🌐 ネット対戦</button>
+  <button id="btnLocal" class="pink">📱 ローカル対戦 (1台で2人)</button>
+  <div class="sub" style="opacity:.6">
+    操作 — タッチ:ドラッグ / ⌨️ <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or 矢印キー
+  </div>
+</div>
+
+<!-- ネット対戦メニュー -->
+<div id="scrOnline" class="overlay hidden">
+  <h2>🌐 ネット対戦</h2>
+  <div class="pts" id="ptsRow">
+    <button data-p="3">3点先取</button>
+    <button data-p="5" class="sel">5点先取</button>
+    <button data-p="7">7点先取</button>
+  </div>
+  <button id="btnCreate">ルームを作る</button>
+  <div class="sub">— または —</div>
+  <input type="text" id="joinInput" maxlength="4" placeholder="CODE" autocomplete="off">
+  <button id="btnJoin" class="pink">ルームに参加</button>
+  <div class="err" id="onlineErr"></div>
+  <button id="btnBackTitle" class="ghost">← 戻る</button>
+</div>
+
+<!-- ルーム待機 (ホスト) -->
+<div id="scrWait" class="overlay hidden">
+  <h2>ルームコード</h2>
+  <div id="roomCode">----</div>
+  <div class="sub">このコードを相手に送ってください<br>相手が参加すると自動でスタートします</div>
+  <div class="spin"></div>
+  <button id="btnCancelWait" class="ghost">キャンセル</button>
+</div>
+
+<!-- 接続中 (ゲスト) -->
+<div id="scrConnecting" class="overlay hidden">
+  <h2>接続中...</h2>
+  <div class="spin"></div>
+  <button id="btnCancelConn" class="ghost">キャンセル</button>
+</div>
+
+<!-- 勝敗 -->
+<div id="scrWin" class="overlay hidden">
+  <div class="winner" id="winText"></div>
+  <div class="sub" id="finalScore"></div>
+  <button id="btnRematch">もう一戦</button>
+  <button id="btnToTitle" class="pink">タイトルへ</button>
+</div>
+
+<!-- 切断 -->
+<div id="scrDisc" class="overlay hidden">
+  <h2>⚡ 接続が切れました</h2>
+  <div class="sub" id="discReason">相手との通信が切断されました</div>
+  <button id="btnDiscTitle">タイトルへ</button>
+</div>
+
+<script>
+(() => {
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+// ===== 定数 =====
+const W = 600, H = 1000;
+const GOAL_W = 220;
+const PADDLE_R = 46;
+const PUCK_R = 26;
+const FRICTION = 0.995;
+const MAX_PUCK_SPD = 26;
+const PADDLE_SPD = 11;
+const C_HOST = '#00e5ff', C_GUEST = '#ff2e88';
+
+let scale = 1;
+let winPoints = 5;
+
+// mode: 'local' | 'host' | 'guest'
+let mode = 'local';
+// phase: 'idle' | 'countdown' | 'play' | 'goalpause' | 'over'
+let phase = 'idle';
+let countdownT = 0;
+let goalFlash = 0, goalFlashColor = C_HOST;
+let particles = [];
+
+// シミュレーション状態 (host座標系: p1=ホスト=下, p2=ゲスト=上)
+const sim = {
+  p1: { x: W/2, y: H-140, vx:0, vy:0, score:0 },
+  p2: { x: W/2, y: 140,   vx:0, vy:0, score:0 },
+  puck: { x: W/2, y: H/2, vx:0, vy:0 },
+};
+
+// ゲストが受信した最新状態
+let netState = null;
+// ゲスト自身のパドル位置 (ゲスト画面座標: 自分は下)
+const myPad = { x: W/2, y: H-140 };
+// ゲストから受信した入力 (host座標系)
+const guestInput = { x: W/2, y: 140, has:false };
+
+// ===== ネットワーク =====
+let peer = null, conn = null;
+let lastPing = 0, pingMs = null;
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const PEER_PREFIX = 'neonhockey-v1-';
+
+function genCode(){
+  let c = '';
+  for(let i=0;i<4;i++) c += CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)];
+  return c;
+}
+function cleanupNet(){
+  if(conn){ try{conn.close();}catch(e){} conn = null; }
+  if(peer){ try{peer.destroy();}catch(e){} peer = null; }
+  pingBadge.classList.add('hidden');
+  pingMs = null;
+}
+function send(msg){
+  if(conn && conn.open){ try{ conn.send(msg); }catch(e){} }
+}
+
+// ホスト: ルーム作成
+function createRoom(){
+  cleanupNet();
+  const code = genCode();
+  roomCodeEl.textContent = code;
+  show(scrWait);
+  peer = new Peer(PEER_PREFIX + code);
+  peer.on('open', () => {
+    peer.on('connection', c => {
+      if(conn){ c.close(); return; } // 満室
+      conn = c;
+      setupConn();
+      conn.on('open', () => {
+        mode = 'host';
+        send({ t:'hello', winPoints });
+        startMatch();
+      });
+    });
+  });
+  peer.on('error', err => {
+    if(err.type === 'unavailable-id'){ createRoom(); return; } // コード衝突→再生成
+    show(scrOnline);
+    onlineErr.textContent = '接続エラー: ' + err.type;
+    cleanupNet();
+  });
+}
+
+// ゲスト: 参加
+function joinRoom(code){
+  cleanupNet();
+  show(scrConnecting);
+  peer = new Peer();
+  peer.on('open', () => {
+    conn = peer.connect(PEER_PREFIX + code, { reliable:false });
+    let opened = false;
+    conn.on('open', () => { opened = true; setupConn(); });
+    conn.on('data', d => { if(d.t === 'hello'){ winPoints = d.winPoints; mode = 'guest'; } });
+    setTimeout(() => {
+      if(!opened){
+        cleanupNet();
+        show(scrOnline);
+        onlineErr.textContent = 'ルームが見つかりません。コードを確認してください';
+      }
+    }, 8000);
+  });
+  peer.on('error', err => {
+    show(scrOnline);
+    onlineErr.textContent = err.type === 'peer-unavailable' ? 'ルームが見つかりません' : '接続エラー: ' + err.type;
+    cleanupNet();
+  });
+}
+
+function setupConn(){
+  conn.on('data', onNetData);
+  conn.on('close', onDisconnect);
+  conn.on('error', onDisconnect);
+  pingBadge.classList.remove('hidden');
+}
+function onDisconnect(){
+  if(phase === 'idle') return;
+  cleanupNet();
+  phase = 'idle';
+  show(scrDisc);
+}
+
+function onNetData(d){
+  switch(d.t){
+    case 'hello':
+      winPoints = d.winPoints;
+      mode = 'guest';
+      break;
+    case 'state': // host → guest
+      netState = d;
+      hideAllIfPlaying(d.ph);
+      phase = d.ph;
+      countdownT = d.cd;
+      break;
+    case 'ev': // host → guest (演出)
+      for(const e of d.evs){
+        const [x, y] = flip(e.x, e.y);
+        if(e.k === 's') spark(x, y, e.c);
+        else burst(x, y, e.c);
+        if(e.k === 'b'){ goalFlash = 1; goalFlashColor = e.c; }
+      }
+      break;
+    case 'input': // guest → host
+      guestInput.x = W - d.x;   // ゲスト画面座標 → host座標に反転
+      guestInput.y = H - d.y;
+      guestInput.has = true;
+      break;
+    case 'win': // host → guest
+      showWin(d.by === 2, d.s2, d.s1); // ゲスト視点: 自分=p2
+      break;
+    case 'rematch': // guest → host
+      if(mode === 'host') startMatch();
+      break;
+    case 'restart': // host → guest
+      show(null);
+      break;
+    case 'ping': send({ t:'pong', ts: d.ts }); break;
+    case 'pong': pingMs = Math.round(performance.now() - d.ts); break;
+  }
+}
+function hideAllIfPlaying(ph){
+  if((ph === 'countdown' || ph === 'play') && phase === 'idle') show(null);
+}
+
+// ===== 画面管理 =====
+const scrTitle = document.getElementById('scrTitle');
+const scrOnline = document.getElementById('scrOnline');
+const scrWait = document.getElementById('scrWait');
+const scrConnecting = document.getElementById('scrConnecting');
+const scrWin = document.getElementById('scrWin');
+const scrDisc = document.getElementById('scrDisc');
+const roomCodeEl = document.getElementById('roomCode');
+const onlineErr = document.getElementById('onlineErr');
+const pingBadge = document.getElementById('pingBadge');
+const allScreens = [scrTitle, scrOnline, scrWait, scrConnecting, scrWin, scrDisc];
+function show(scr){
+  allScreens.forEach(s => s.classList.add('hidden'));
+  if(scr) scr.classList.remove('hidden');
+}
+
+// ===== リサイズ =====
+function resize(){
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const s = Math.min(vw / W, vh / H) * 0.97;
+  cv.width = W * s * dpr;
+  cv.height = H * s * dpr;
+  cv.style.width = (W*s)+'px';
+  cv.style.height = (H*s)+'px';
+  ctx.setTransform(s*dpr, 0, 0, s*dpr, 0, 0);
+  scale = s;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function flip(x, y){ return [W - x, H - y]; }
+
+// ===== 入力 =====
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())) e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+const touches = {};
+function toCourt(cx, cy){
+  const r = cv.getBoundingClientRect();
+  return { x:(cx - r.left)/scale, y:(cy - r.top)/scale };
+}
+function assignTouch(id, cx, cy){
+  const c = toCourt(cx, cy);
+  // ネット対戦: 全タッチが自分用 / ローカル: 上下で振り分け
+  const player = (mode === 'local') ? (c.y < H/2 ? 2 : 1) : 1;
+  touches[id] = { player, x:c.x, y:c.y };
+}
+cv.addEventListener('touchstart', e => { e.preventDefault(); for(const t of e.changedTouches) assignTouch(t.identifier, t.clientX, t.clientY); }, {passive:false});
+cv.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(touches[t.identifier]){
+      const c = toCourt(t.clientX, t.clientY);
+      touches[t.identifier].x = c.x;
+      touches[t.identifier].y = c.y;
+    }
+  }
+}, {passive:false});
+const clearTouch = e => { for(const t of e.changedTouches) delete touches[t.identifier]; };
+cv.addEventListener('touchend', clearTouch);
+cv.addEventListener('touchcancel', clearTouch);
+let mouseDown = false;
+cv.addEventListener('mousedown', e => { mouseDown = true; assignTouch('m', e.clientX, e.clientY); });
+window.addEventListener('mousemove', e => { if(mouseDown && touches['m']){ const c = toCourt(e.clientX, e.clientY); touches['m'].x = c.x; touches['m'].y = c.y; } });
+window.addEventListener('mouseup', () => { mouseDown = false; delete touches['m']; });
+
+function keyDelta(set){
+  let dx = 0, dy = 0;
+  if(set.includes('wasd')){ if(keys['a']) dx--; if(keys['d']) dx++; if(keys['w']) dy--; if(keys['s']) dy++; }
+  if(set.includes('arrows')){ if(keys['arrowleft']) dx--; if(keys['arrowright']) dx++; if(keys['arrowup']) dy--; if(keys['arrowdown']) dy++; }
+  return [dx, dy];
+}
+function movePaddle(p, tx, ty, minY, maxY){
+  const px = p.x, py = p.y;
+  p.x = Math.max(PADDLE_R, Math.min(W - PADDLE_R, tx));
+  p.y = Math.max(minY + PADDLE_R, Math.min(maxY - PADDLE_R, ty));
+  p.vx = p.x - px; p.vy = p.y - py;
+}
+
+// 自分のパドル操作 (画面座標: 自分は常に下半分)
+function readMyInput(target, keyset){
+  let t = null;
+  for(const id in touches) if(touches[id].player === 1){ t = touches[id]; break; }
+  if(t){ target.x = t.x; target.y = t.y; return true; }
+  const [dx, dy] = keyDelta(keyset);
+  if(dx || dy){
+    const m = Math.hypot(dx, dy);
+    target.x += dx/m * PADDLE_SPD;
+    target.y += dy/m * PADDLE_SPD;
+    return true;
+  }
+  return false;
+}
+
+// ===== イベントバッファ (ホスト→ゲスト演出同期) =====
+let evBuf = [];
+function pushEv(k, x, y, c){ evBuf.push({k, x, y, c}); }
+function flushEv(){
+  if(evBuf.length && mode === 'host'){ send({ t:'ev', evs: evBuf }); }
+  evBuf = [];
+}
+
+// ===== 物理 (host/localのみ実行) =====
+function updatePuck(){
+  const pk = sim.puck;
+  pk.x += pk.vx; pk.y += pk.vy;
+  pk.vx *= FRICTION; pk.vy *= FRICTION;
+
+  if(pk.x < PUCK_R){ pk.x = PUCK_R; pk.vx = Math.abs(pk.vx)*.92; hitFx(pk.x, pk.y, '#8fa3ff'); }
+  if(pk.x > W-PUCK_R){ pk.x = W-PUCK_R; pk.vx = -Math.abs(pk.vx)*.92; hitFx(pk.x, pk.y, '#8fa3ff'); }
+
+  const inGoalX = pk.x > (W-GOAL_W)/2 && pk.x < (W+GOAL_W)/2;
+  if(pk.y < PUCK_R){
+    if(inGoalX){ if(pk.y < -PUCK_R) goal(1); }
+    else { pk.y = PUCK_R; pk.vy = Math.abs(pk.vy)*.92; hitFx(pk.x, pk.y, '#8fa3ff'); }
+  }
+  if(pk.y > H-PUCK_R){
+    if(inGoalX){ if(pk.y > H+PUCK_R) goal(2); }
+    else { pk.y = H-PUCK_R; pk.vy = -Math.abs(pk.vy)*.92; hitFx(pk.x, pk.y, '#8fa3ff'); }
+  }
+
+  for(const [p, color] of [[sim.p1, C_HOST], [sim.p2, C_GUEST]]){
+    const dx = pk.x - p.x, dy = pk.y - p.y;
+    const dist = Math.hypot(dx, dy), minD = PUCK_R + PADDLE_R;
+    if(dist < minD && dist > 0){
+      const nx = dx/dist, ny = dy/dist;
+      pk.x = p.x + nx*minD; pk.y = p.y + ny*minD;
+      const dot = pk.vx*nx + pk.vy*ny;
+      pk.vx -= 2*dot*nx; pk.vy -= 2*dot*ny;
+      pk.vx = pk.vx*.55 + p.vx*1.35 + nx*3;
+      pk.vy = pk.vy*.55 + p.vy*1.35 + ny*3;
+      hitFx(pk.x - nx*PUCK_R, pk.y - ny*PUCK_R, color);
+    }
+  }
+  const spd = Math.hypot(pk.vx, pk.vy);
+  if(spd > MAX_PUCK_SPD){ pk.vx = pk.vx/spd*MAX_PUCK_SPD; pk.vy = pk.vy/spd*MAX_PUCK_SPD; }
+}
+function hitFx(x, y, c){ spark(x, y, c); pushEv('s', x, y, c); }
+
+function goal(scorer){
+  if(phase !== 'play') return;
+  const p = scorer === 1 ? sim.p1 : sim.p2;
+  const c = scorer === 1 ? C_HOST : C_GUEST;
+  p.score++;
+  goalFlash = 1; goalFlashColor = c;
+  const by = Math.max(PUCK_R, Math.min(H-PUCK_R, sim.puck.y));
+  burst(sim.puck.x, by, c);
+  pushEv('b', sim.puck.x, by, c);
+  if(p.score >= winPoints){
+    phase = 'over';
+    if(mode === 'host') send({ t:'win', by: scorer, s1: sim.p1.score, s2: sim.p2.score });
+    setTimeout(() => {
+      if(mode === 'local') showWin(null, sim.p1.score, sim.p2.score, scorer);
+      else showWin(scorer === 1, sim.p1.score, sim.p2.score);
+    }, 900);
+  } else {
+    phase = 'goalpause';
+    setTimeout(() => resetPuck(scorer === 1 ? 2 : 1), 1200);
+  }
+}
+function resetPuck(loserSide){
+  sim.puck.x = W/2;
+  sim.puck.y = loserSide === 1 ? H/2 + 120 : H/2 - 120;
+  sim.puck.vx = 0; sim.puck.vy = 0;
+  sim.p1.x = W/2; sim.p1.y = H-140;
+  sim.p2.x = W/2; sim.p2.y = 140;
+  myPad.x = W/2; myPad.y = H-140;
+  phase = 'countdown';
+  countdownT = 60;
+}
+function startMatch(){
+  sim.p1.score = 0; sim.p2.score = 0;
+  particles = [];
+  show(null);
+  if(mode === 'host') send({ t:'restart' });
+  resetPuck(Math.random() < .5 ? 1 : 2);
+}
+
+// ===== パーティクル =====
+function spark(x, y, color){
+  for(let i=0;i<6;i++) particles.push({x, y, vx:(Math.random()-.5)*8, vy:(Math.random()-.5)*8, life:20, color});
+}
+function burst(x, y, color){
+  for(let i=0;i<40;i++){
+    const a = Math.random()*Math.PI*2, s = 2+Math.random()*10;
+    particles.push({x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:40+Math.random()*20, color});
+  }
+}
+
+// ===== 描画 (view: 自分=下 の画面座標) =====
+function draw(view){
+  ctx.clearRect(0, 0, W, H);
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#161028'); g.addColorStop(.5, '#101830'); g.addColorStop(1, '#0e1c30');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  if(goalFlash > 0){
+    ctx.globalAlpha = goalFlash * 0.25;
+    ctx.fillStyle = goalFlashColor;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+    goalFlash -= 0.02;
+  }
+
+  ctx.strokeStyle = '#1d2b52'; ctx.lineWidth = 4;
+  ctx.setLineDash([18, 14]);
+  ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(W/2, H/2, 110, 0, Math.PI*2); ctx.stroke();
+
+  for(const [y, color] of [[0, view.topColor], [H, view.botColor]]){
+    ctx.strokeStyle = color; ctx.lineWidth = 8;
+    ctx.shadowColor = color; ctx.shadowBlur = 20;
+    ctx.beginPath(); ctx.moveTo((W-GOAL_W)/2, y); ctx.lineTo((W+GOAL_W)/2, y); ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.font = '800 90px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = view.topColor + '48';
+  ctx.save(); ctx.translate(W/2, H/2 - 60); ctx.rotate(Math.PI); ctx.fillText(view.topScore, 0, 0); ctx.restore();
+  ctx.fillStyle = view.botColor + '48';
+  ctx.fillText(view.botScore, W/2, H/2 + 130);
+
+  for(let i = particles.length-1; i >= 0; i--){
+    const pt = particles[i];
+    pt.x += pt.vx; pt.y += pt.vy; pt.vx *= .94; pt.vy *= .94; pt.life--;
+    if(pt.life <= 0){ particles.splice(i,1); continue; }
+    ctx.globalAlpha = Math.min(1, pt.life/20);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.shadowColor = '#f8f32b'; ctx.shadowBlur = 24;
+  ctx.fillStyle = '#f8f32b';
+  ctx.beginPath(); ctx.arc(view.puck.x, view.puck.y, PUCK_R, 0, Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(10,14,26,.35)';
+  ctx.beginPath(); ctx.arc(view.puck.x, view.puck.y, PUCK_R*.55, 0, Math.PI*2); ctx.fill();
+
+  for(const [p, color] of [[view.bot, view.botColor], [view.top, view.topColor]]){
+    ctx.shadowColor = color; ctx.shadowBlur = 26;
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, PADDLE_R, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(10,14,26,.4)';
+    ctx.beginPath(); ctx.arc(p.x, p.y, PADDLE_R*.6, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, PADDLE_R*.22, 0, Math.PI*2); ctx.fill();
+  }
+
+  if(phase === 'countdown'){
+    const n = Math.ceil(countdownT/60*3);
+    ctx.font = '800 120px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(232,236,255,.9)';
+    ctx.shadowColor = '#fff'; ctx.shadowBlur = 30;
+    ctx.fillText(n, W/2, H/2 + 42);
+    ctx.shadowBlur = 0;
+  }
+}
+
+// ===== メインループ =====
+let frame = 0;
+function loop(){
+  frame++;
+  const active = phase === 'play' || phase === 'countdown' || phase === 'goalpause';
+
+  if(mode === 'local'){
+    if(active){
+      // P1(下): タッチ or WASD
+      let t1 = null, t2 = null;
+      for(const id in touches){ if(touches[id].player === 1) t1 = touches[id]; else t2 = touches[id]; }
+      if(t1) movePaddle(sim.p1, t1.x, t1.y, H/2, H);
+      else { const [dx,dy] = keyDelta(['wasd']); if(dx||dy){ const m = Math.hypot(dx,dy); movePaddle(sim.p1, sim.p1.x+dx/m*PADDLE_SPD, sim.p1.y+dy/m*PADDLE_SPD, H/2, H); } else sim.p1.vx = sim.p1.vy = 0; }
+      if(t2) movePaddle(sim.p2, t2.x, t2.y, 0, H/2);
+      else { const [dx,dy] = keyDelta(['arrows']); if(dx||dy){ const m = Math.hypot(dx,dy); movePaddle(sim.p2, sim.p2.x+dx/m*PADDLE_SPD, sim.p2.y+dy/m*PADDLE_SPD, 0, H/2); } else sim.p2.vx = sim.p2.vy = 0; }
+      if(phase === 'play') updatePuck();
+      tickCountdown();
+      draw({ bot:sim.p1, top:sim.p2, puck:sim.puck, botScore:sim.p1.score, topScore:sim.p2.score, botColor:C_HOST, topColor:C_GUEST });
+    }
+  }
+  else if(mode === 'host'){
+    if(active){
+      // 自分(p1): タッチ/WASD/矢印すべて有効
+      readMyInput(myPad, ['wasd','arrows']);
+      movePaddle(sim.p1, myPad.x, myPad.y, H/2, H);
+      myPad.x = sim.p1.x; myPad.y = sim.p1.y;
+      // 相手(p2): 受信した入力を反映
+      if(guestInput.has) movePaddle(sim.p2, guestInput.x, guestInput.y, 0, H/2);
+      else { sim.p2.vx = sim.p2.vy = 0; }
+      if(phase === 'play') updatePuck();
+      tickCountdown();
+      draw({ bot:sim.p1, top:sim.p2, puck:sim.puck, botScore:sim.p1.score, topScore:sim.p2.score, botColor:C_HOST, topColor:C_GUEST });
+    }
+    // 状態送信 (毎フレーム) + ping (1秒毎)
+    send({ t:'state', ph:phase, cd:countdownT,
+      p1x:sim.p1.x, p1y:sim.p1.y, p2x:sim.p2.x, p2y:sim.p2.y,
+      px:sim.puck.x, py:sim.puck.y, s1:sim.p1.score, s2:sim.p2.score });
+    flushEv();
+    if(frame % 60 === 0) send({ t:'ping', ts: performance.now() });
+  }
+  else if(mode === 'guest'){
+    if(active){
+      // 自分のパドル: ローカル即時反映 (遅延を感じさせない)
+      readMyInput(myPad, ['wasd','arrows']);
+      myPad.x = Math.max(PADDLE_R, Math.min(W-PADDLE_R, myPad.x));
+      myPad.y = Math.max(H/2 + PADDLE_R, Math.min(H - PADDLE_R, myPad.y));
+      // 入力送信 (ゲスト画面座標のまま → ホスト側で反転)
+      send({ t:'input', x:myPad.x, y:myPad.y });
+      if(phase === 'countdown'){ /* countdownTはstate受信で更新 */ }
+      if(netState){
+        // 受信状態を反転して描画 (自分=下)
+        const [hx, hy] = flip(netState.p1x, netState.p1y); // ホストパドル → 上
+        const [px, py] = flip(netState.px, netState.py);   // パック
+        draw({
+          bot: myPad,                       // 自分 (ローカル予測)
+          top: { x:hx, y:hy },              // 相手 (ホスト)
+          puck: { x:px, y:py },
+          botScore: netState.s2, topScore: netState.s1,
+          botColor: C_GUEST, topColor: C_HOST
+        });
+      }
+    }
+    if(frame % 60 === 0) send({ t:'ping', ts: performance.now() });
+  }
+
+  if(pingMs !== null && frame % 30 === 0) pingBadge.textContent = pingMs + ' ms';
+  requestAnimationFrame(loop);
+}
+function tickCountdown(){
+  if(phase === 'countdown'){ countdownT--; if(countdownT <= 0) phase = 'play'; }
+}
+loop();
+
+// ===== 勝敗表示 =====
+const winText = document.getElementById('winText');
+const finalScore = document.getElementById('finalScore');
+// online: showWin(didIWin, myScore, oppScore) / local: showWin(null, s1, s2, winner)
+function showWin(didIWin, a, b, localWinner){
+  if(didIWin === null){
+    winText.textContent = `PLAYER ${localWinner} の勝ち!`;
+    winText.className = 'winner win';
+    finalScore.textContent = `${a} - ${b}`;
+  } else {
+    winText.textContent = didIWin ? 'あなたの勝ち! 🏆' : 'あなたの負け...';
+    winText.className = 'winner ' + (didIWin ? 'win' : 'lose');
+    finalScore.textContent = `${didIWin ? Math.max(a,b) : Math.min(a,b)} - ${didIWin ? Math.min(a,b) : Math.max(a,b)}`;
+  }
+  show(scrWin);
+}
+
+// ===== UIイベント =====
+document.querySelectorAll('#ptsRow button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#ptsRow button').forEach(x => x.classList.remove('sel'));
+    b.classList.add('sel');
+    winPoints = parseInt(b.dataset.p);
+  });
+});
+document.getElementById('btnLocal').addEventListener('click', () => { mode = 'local'; winPoints = 5; startMatch(); });
+document.getElementById('btnOnline').addEventListener('click', () => { onlineErr.textContent = ''; show(scrOnline); });
+document.getElementById('btnBackTitle').addEventListener('click', () => { cleanupNet(); show(scrTitle); });
+document.getElementById('btnCreate').addEventListener('click', createRoom);
+document.getElementById('btnJoin').addEventListener('click', () => {
+  const code = document.getElementById('joinInput').value.trim().toUpperCase();
+  if(code.length !== 4){ onlineErr.textContent = '4文字のコードを入力してください'; return; }
+  joinRoom(code);
+});
+document.getElementById('joinInput').addEventListener('keydown', e => { if(e.key === 'Enter') document.getElementById('btnJoin').click(); });
+document.getElementById('btnCancelWait').addEventListener('click', () => { cleanupNet(); show(scrOnline); });
+document.getElementById('btnCancelConn').addEventListener('click', () => { cleanupNet(); show(scrOnline); });
+document.getElementById('btnRematch').addEventListener('click', () => {
+  if(mode === 'local' || mode === 'host') startMatch();
+  else send({ t:'rematch' }); // ゲスト → ホストに再戦要求
+});
+document.getElementById('btnToTitle').addEventListener('click', () => { cleanupNet(); phase = 'idle'; mode = 'local'; show(scrTitle); });
+document.getElementById('btnDiscTitle').addEventListener('click', () => { phase = 'idle'; mode = 'local'; show(scrTitle); });
+})();
+</script>
+</body>
+</html>
