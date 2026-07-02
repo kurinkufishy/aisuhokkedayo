@@ -181,7 +181,13 @@ const PEER_PREFIX = 'neonhockey-v1-';
 //   { urls: 'turn:global.relay.metered.ca:443', username: 'xxxx', credential: 'yyyy' },
 //   { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: 'xxxx', credential: 'yyyy' },
 // ];
-const TURN_SERVERS = [];
+const TURN_SERVERS = [
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  { urls: 'turn:global.relay.metered.ca:80', username: '117f97756ee03b5a91a23cff', credential: 'BfZYlBJrb5ce4BwH' },
+  { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username: '117f97756ee03b5a91a23cff', credential: 'BfZYlBJrb5ce4BwH' },
+  { urls: 'turn:global.relay.metered.ca:443', username: '117f97756ee03b5a91a23cff', credential: 'BfZYlBJrb5ce4BwH' },
+  { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: '117f97756ee03b5a91a23cff', credential: 'BfZYlBJrb5ce4BwH' },
+];
 // ▲▲▲ ここまで ▲▲▲
 
 const PEER_OPTS = {
