@@ -56,6 +56,11 @@
   .frow button{padding:6px 14px;font-size:13px;border-radius:8px}
   .mini{font-size:12px;opacity:.65}
   .codebox{font-weight:800;letter-spacing:.2em;color:var(--puck);background:#101a36;border:1px dashed #3a4a7a;border-radius:10px;padding:8px 16px;font-size:20px}
+  .dmlist{display:flex;flex-direction:column;gap:8px;width:min(480px,90vw);height:44vh;overflow-y:auto;touch-action:pan-y;background:#0c1226;border:1px solid #2c3d6e;border-radius:14px;padding:14px}
+  .bubble{max-width:75%;padding:10px 14px;border-radius:14px;font-size:15px;line-height:1.5;text-align:left;word-break:break-word}
+  .bubble.me{align-self:flex-end;background:#0a3d4a;border:1px solid rgba(0,229,255,.4);border-bottom-right-radius:4px}
+  .bubble.them{align-self:flex-start;background:#3d1029;border:1px solid rgba(255,46,136,.4);border-bottom-left-radius:4px}
+  .bubble .t{display:block;font-size:10px;opacity:.5;margin-top:4px}
   .spin{width:40px;height:40px;border:4px solid #2c3d6e;border-top-color:var(--p1);border-radius:50%;animation:sp 0.9s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
   .err{color:#ff8080;font-size:14px;min-height:20px}
@@ -140,6 +145,18 @@
   </div>
 </div>
 
+<!-- DM -->
+<div id="scrDM" class="overlay hidden">
+  <h2 id="dmTitle">💬 DM</h2>
+  <div class="dmlist" id="dmList"></div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <input type="text" id="dmInput" class="field" placeholder="メッセージを入力" maxlength="300" style="width:min(340px,60vw)">
+    <button id="btnDmSend" style="padding:12px 22px;font-size:15px">送信</button>
+  </div>
+  <div class="err" id="dmErr"></div>
+  <button id="btnDmBack" class="ghost">← フレンド一覧へ</button>
+</div>
+
 <!-- ルーム待機 (ホスト) -->
 <div id="scrWait" class="overlay hidden">
   <h2>ルームコード</h2>
@@ -217,6 +234,7 @@ const guestInput = { x: W/2, y: 140, has:false };
 let peer = null, conn = null;
 let lastPing = 0, pingMs = null;
 let pendingInviteTo = null; // 対戦に誘う相手のユーザーID (ルーム作成完了時に招待送信)
+let opponentPid = null, opponentName = null; // 対戦相手のプロフィール (戦績記録用)
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const PEER_PREFIX = 'neonhockey-v1-';
 
@@ -277,7 +295,7 @@ function createRoom(){
     roomCodeEl.textContent = code;
     waitStatus.textContent = 'このコードを相手に送ってください';
     if(pendingInviteTo){
-      sendInviteBroadcast(pendingInviteTo, code);
+      sendInvite(pendingInviteTo, code);
       pendingInviteTo = null;
       waitStatus.textContent = '招待を送りました!相手の参加を待っています...';
     }
@@ -288,7 +306,7 @@ function createRoom(){
       setupConn();
       conn.on('open', () => {
         mode = 'host';
-        send({ t:'hello', winPoints });
+        send({ t:'hello', winPoints, pid: myProfile ? myProfile.id : null, pname: myProfile ? myProfile.username : null });
         startMatch();
       });
     });
@@ -378,6 +396,13 @@ function onNetData(d){
     case 'hello':
       winPoints = d.winPoints;
       mode = 'guest';
+      opponentPid = d.pid || null;
+      opponentName = d.pname || null;
+      send({ t:'iam', pid: myProfile ? myProfile.id : null, pname: myProfile ? myProfile.username : null });
+      break;
+    case 'iam': // guest → host (プロフィール交換)
+      opponentPid = d.pid || null;
+      opponentName = d.pname || null;
       break;
     case 'state': // host → guest
       netState = d;
@@ -569,7 +594,10 @@ function goal(scorer){
   pushEv('b', sim.puck.x, by, c);
   if(p.score >= winPoints){
     phase = 'over';
-    if(mode === 'host') send({ t:'win', by: scorer, s1: sim.p1.score, s2: sim.p2.score });
+    if(mode === 'host'){
+      send({ t:'win', by: scorer, s1: sim.p1.score, s2: sim.p2.score });
+      recordMatch(scorer);
+    }
     setTimeout(() => {
       if(mode === 'local') showWin(null, sim.p1.score, sim.p2.score, scorer);
       else showWin(scorer === 1, sim.p1.score, sim.p2.score);
@@ -1004,38 +1032,108 @@ function startPresence(){
   presenceChannel.subscribe(status => {
     if(status === 'SUBSCRIBED') presenceChannel.track({ online_at: Date.now() });
   });
-  startInviteListener();
 }
 
-// ---- 対戦招待 (Realtime Broadcast) ----
-let inviteChannel = null;
-function startInviteListener(){
-  if(inviteChannel) return;
-  inviteChannel = sb.channel('invite-' + myProfile.id);
-  inviteChannel.on('broadcast', { event: 'invite' }, ({ payload }) => {
-    // ゲーム中は無視
-    if(phase !== 'idle') return;
-    if(confirm(`⚔️ ${payload.from} から対戦の招待が届きました!\n参加しますか?`)){
-      show(scrConnecting);
-      joinRoom(payload.code);
-    }
-  });
-  inviteChannel.subscribe();
+// ---- 対戦招待 (invitesテーブル + 3秒ポーリング) ----
+let inviteBusy = false;
+async function sendInvite(targetId, code){
+  const { error } = await sb.from('invites').insert({ sender: myProfile.id, recipient: targetId, code });
+  if(error) alert('招待の送信に失敗: ' + error.message);
 }
-function sendInviteBroadcast(targetId, code){
-  const ch = sb.channel('invite-' + targetId);
-  ch.subscribe(status => {
-    if(status === 'SUBSCRIBED'){
-      ch.send({ type: 'broadcast', event: 'invite', payload: { from: myProfile.username, code } });
-      setTimeout(() => sb.removeChannel(ch), 3000); // 送ったら片付ける
-    }
-  });
-}
+// 自分宛ての招待を3秒ごとにチェック (直近60秒のもののみ有効)
+setInterval(async () => {
+  if(!myProfile || phase !== 'idle' || inviteBusy) return;
+  const cutoff = new Date(Date.now() - 60000).toISOString();
+  const { data } = await sb.from('invites')
+    .select('id,code,sender')
+    .eq('recipient', myProfile.id)
+    .gt('created_at', cutoff)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if(!data || !data.length) return;
+  inviteBusy = true;
+  const inv = data[0];
+  const { data: p } = await sb.from('profiles').select('username').eq('id', inv.sender).single();
+  await sb.from('invites').delete().eq('id', inv.id); // 受け取ったら削除 (二重表示防止)
+  if(confirm(`⚔️ ${p ? p.username : '???'} から対戦の招待が届きました!\n参加しますか?`)){
+    show(scrConnecting);
+    joinRoom(inv.code);
+  }
+  inviteBusy = false;
+}, 3000);
+
 function inviteFriend(friendId){
   pendingInviteTo = friendId;
   winPoints = 5;
   createRoom(); // ルーム作成 → コード確定後に自動で招待が飛ぶ
 }
+
+// ---- 戦績記録 (ホスト側が試合終了時に書き込む) ----
+async function recordMatch(winnerSide){
+  if(!sb || !myProfile || !opponentPid) return; // 両者ログイン済みの時のみ記録
+  const iWon = winnerSide === 1; // host = p1
+  const row = {
+    winner: iWon ? myProfile.id : opponentPid,
+    loser:  iWon ? opponentPid : myProfile.id,
+    winner_score: Math.max(sim.p1.score, sim.p2.score),
+    loser_score:  Math.min(sim.p1.score, sim.p2.score),
+  };
+  const { error } = await sb.from('matches').insert(row);
+  if(error) console.warn('戦績記録に失敗:', error.message);
+}
+
+// ---- DM ----
+const scrDM = document.getElementById('scrDM');
+allScreens.push(scrDM);
+const dmList = document.getElementById('dmList');
+const dmErr = document.getElementById('dmErr');
+let dmFriend = null; // { id, name }
+
+function openDM(friendId, friendName){
+  dmFriend = { id: friendId, name: friendName };
+  document.getElementById('dmTitle').textContent = '💬 ' + friendName;
+  dmList.innerHTML = '<div class="mini">読み込み中...</div>';
+  dmErr.textContent = '';
+  show(scrDM);
+  loadDM(true);
+}
+document.getElementById('btnDmBack').addEventListener('click', () => { dmFriend = null; openFriends(); });
+
+async function loadDM(scrollToEnd){
+  if(!dmFriend || !myProfile) return;
+  const { data: msgs, error } = await sb.from('messages')
+    .select('id,sender,body,created_at')
+    .or(`and(sender.eq.${myProfile.id},recipient.eq.${dmFriend.id}),and(sender.eq.${dmFriend.id},recipient.eq.${myProfile.id})`)
+    .order('created_at', { ascending: true })
+    .limit(100);
+  if(error){ dmErr.textContent = '読み込みエラー: ' + error.message; return; }
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const nearBottom = dmList.scrollHeight - dmList.scrollTop - dmList.clientHeight < 60;
+  dmList.innerHTML = msgs.length ? '' : '<div class="mini">まだメッセージがありません</div>';
+  for(const m of msgs){
+    const b = document.createElement('div');
+    b.className = 'bubble ' + (m.sender === myProfile.id ? 'me' : 'them');
+    const time = new Date(m.created_at).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
+    b.innerHTML = esc(m.body) + `<span class="t">${time}</span>`;
+    dmList.appendChild(b);
+  }
+  if(scrollToEnd || nearBottom) dmList.scrollTop = dmList.scrollHeight;
+}
+// DM画面表示中は3秒ごとに更新
+setInterval(() => { if(dmFriend && !scrDM.classList.contains('hidden')) loadDM(false); }, 3000);
+
+async function sendDM(){
+  const input = document.getElementById('dmInput');
+  const body = input.value.trim();
+  if(!body || !dmFriend) return;
+  const { error } = await sb.from('messages').insert({ sender: myProfile.id, recipient: dmFriend.id, body });
+  if(error){ dmErr.textContent = '送信エラー: ' + error.message; return; }
+  dmErr.textContent = '';
+  input.value = '';
+  loadDM(true);
+}
+document.getElementById('btnDmSend').addEventListener('click', sendDM);
+document.getElementById('dmInput').addEventListener('keydown', e => { if(e.key === 'Enter') sendDM(); });
 function onlineIdSet(){
   return new Set(presenceChannel ? Object.keys(presenceChannel.presenceState()) : []);
 }
@@ -1082,6 +1180,16 @@ async function renderFriends(){
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const nameOf = id => esc(profiles[id] ? profiles[id].username : '???');
 
+  // 戦績を集計 (相手ごとの勝敗)
+  const rec = {}; // opponentId -> {w, l}
+  const { data: ms } = await sb.from('matches').select('winner,loser')
+    .or(`winner.eq.${myProfile.id},loser.eq.${myProfile.id}`);
+  for(const m of (ms || [])){
+    const opp = m.winner === myProfile.id ? m.loser : m.winner;
+    if(!rec[opp]) rec[opp] = { w:0, l:0 };
+    if(m.winner === myProfile.id) rec[opp].w++; else rec[opp].l++;
+  }
+
   // 届いた申請 (自分がaddresseeでpending)
   const incoming = rows.filter(r => r.status === 'pending' && r.addressee === myProfile.id);
   pendingLabel.style.display = incoming.length ? '' : 'none';
@@ -1120,9 +1228,15 @@ async function renderFriends(){
   for(const r of accepted){
     const otherId = r.requester === myProfile.id ? r.addressee : r.requester;
     const isOn = online.has(otherId);
+    const rc = rec[otherId];
+    const recText = rc ? `${rc.w}勝${rc.l}敗` : (isOn ? 'オンライン' : 'オフライン');
     const row = document.createElement('div');
     row.className = 'frow';
-    row.innerHTML = `<span class="dot ${isOn ? 'on' : ''}"></span><span class="nm">${nameOf(otherId)}</span><span class="mini">${isOn ? 'オンライン' : 'オフライン'}</span>`;
+    row.innerHTML = `<span class="dot ${isOn ? 'on' : ''}"></span><span class="nm">${nameOf(otherId)}</span><span class="mini">${recText}</span>`;
+    const dm = document.createElement('button');
+    dm.textContent = '💬';
+    dm.onclick = () => openDM(otherId, profiles[otherId] ? profiles[otherId].username : '???');
+    row.appendChild(dm);
     if(isOn){
       const vs = document.createElement('button');
       vs.textContent = '⚔️ 対戦';
