@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>NEON HOCKEY ネット対戦</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --bg:#0a0e1a;
@@ -45,6 +46,16 @@
     text-align:center;text-transform:uppercase;width:min(320px,80vw);
     background:#101a36;border:2px solid #2c3d6e;border-radius:14px;color:var(--text);padding:12px;outline:none}
   input[type=text]:focus{border-color:var(--p1);box-shadow:0 0 16px rgba(0,229,255,.3)}
+  input.field{font-size:16px;font-weight:600;letter-spacing:normal;text-transform:none;width:min(340px,85vw);padding:14px;background:#101a36;border:2px solid #2c3d6e;border-radius:14px;color:var(--text);outline:none;font-family:inherit;text-align:left}
+  input.field:focus{border-color:var(--p1)}
+  .flist{display:flex;flex-direction:column;gap:10px;width:min(460px,88vw);max-height:38vh;overflow-y:auto;touch-action:pan-y}
+  .frow{display:flex;align-items:center;gap:12px;background:#101a36;border:1px solid #2c3d6e;border-radius:12px;padding:10px 14px;font-size:15px}
+  .frow .dot{width:10px;height:10px;border-radius:50%;background:#3a4a7a;flex:none}
+  .frow .dot.on{background:#3dff8b;box-shadow:0 0 8px #3dff8b}
+  .frow .nm{flex:1;text-align:left;font-weight:700}
+  .frow button{padding:6px 14px;font-size:13px;border-radius:8px}
+  .mini{font-size:12px;opacity:.65}
+  .codebox{font-weight:800;letter-spacing:.2em;color:var(--puck);background:#101a36;border:1px dashed #3a4a7a;border-radius:10px;padding:8px 16px;font-size:20px}
   .spin{width:40px;height:40px;border:4px solid #2c3d6e;border-top-color:var(--p1);border-radius:50%;animation:sp 0.9s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
   .err{color:#ff8080;font-size:14px;min-height:20px}
@@ -63,6 +74,8 @@
   <div class="sub">ネオン・エアホッケー対戦</div>
   <button id="btnOnline">🌐 ネット対戦</button>
   <button id="btnLocal" class="pink">📱 ローカル対戦 (1台で2人)</button>
+  <button id="btnFriends" class="ghost">👥 フレンド</button>
+  <div class="sub mini" id="authState">未ログイン</div>
   <div class="sub" style="opacity:.6">
     操作 — タッチ:ドラッグ / ⌨️ <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or 矢印キー
   </div>
@@ -92,6 +105,39 @@
   <div class="sub" id="diagVerdict" style="max-width:520px"></div>
   <button id="btnDiagRun">診断を実行</button>
   <button id="btnDiagBack" class="ghost">← 戻る</button>
+</div>
+
+<!-- ログイン / 新規登録 -->
+<div id="scrAuth" class="overlay hidden">
+  <h2 id="authTitle">ログイン</h2>
+  <input type="email" id="authEmail" class="field" placeholder="メールアドレス" autocomplete="email">
+  <input type="password" id="authPass" class="field" placeholder="パスワード (6文字以上)" autocomplete="current-password">
+  <input type="text" id="authName" class="field hidden" placeholder="ユーザー名 (2〜16文字)" maxlength="16" style="text-align:left;font-size:16px;letter-spacing:normal;text-transform:none">
+  <div class="err" id="authErr"></div>
+  <button id="btnAuthSubmit">ログイン</button>
+  <button id="btnAuthToggle" class="ghost">アカウントを作る</button>
+  <button id="btnAuthBack" class="ghost">← 戻る</button>
+</div>
+
+<!-- フレンド -->
+<div id="scrFriends" class="overlay hidden">
+  <h2>👥 フレンド</h2>
+  <div class="sub mini">あなたのフレンドコード (相手に教えて追加してもらう)</div>
+  <div class="codebox" id="myCode">------</div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <input type="text" id="addCodeInput" maxlength="6" placeholder="コードで追加" style="width:200px;font-size:20px">
+    <button id="btnAddFriend" style="padding:12px 22px;font-size:15px">追加</button>
+  </div>
+  <div class="err" id="friendErr"></div>
+  <div class="sub mini" id="pendingLabel" style="display:none">📩 届いた申請</div>
+  <div class="flist" id="pendingList"></div>
+  <div class="sub mini">フレンド一覧</div>
+  <div class="flist" id="friendList"><div class="mini">読み込み中...</div></div>
+  <div style="display:flex;gap:10px">
+    <button id="btnFriendsRefresh" class="ghost">🔄 更新</button>
+    <button id="btnLogout" class="ghost">ログアウト</button>
+    <button id="btnFriendsBack" class="ghost">← 戻る</button>
+  </div>
 </div>
 
 <!-- ルーム待機 (ホスト) -->
@@ -817,6 +863,212 @@ document.getElementById('btnDiagRun').addEventListener('click', async () => {
   else v = '判定: 直接P2P(STUN)は不可、TURN中継のみ可。接続はできますが遅延が増える可能性があります。';
   diagVerdict.textContent = v;
 });
+
+// ===================================================================
+// Supabase (アカウント / フレンド機能)
+// ===================================================================
+// ▼▼▼ Supabaseプロジェクトの値をここに設定 (Project Settings → API) ▼▼▼
+const SUPABASE_URL = 'https://tjaznbmujxufjxehntdd.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_UXObRFcl0AeBxHB3I4grxw_mS_eiR3j';
+// ▲▲▲ ここまで ▲▲▲
+
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+let myProfile = null;      // { id, username, friend_code }
+let presenceChannel = null;
+
+const scrAuth = document.getElementById('scrAuth');
+const scrFriends = document.getElementById('scrFriends');
+allScreens.push(scrAuth, scrFriends);
+const authState = document.getElementById('authState');
+const authErr = document.getElementById('authErr');
+const friendErr = document.getElementById('friendErr');
+const myCodeEl = document.getElementById('myCode');
+const friendListEl = document.getElementById('friendList');
+const pendingListEl = document.getElementById('pendingList');
+const pendingLabel = document.getElementById('pendingLabel');
+
+// ---- 起動時: セッション復元 ----
+async function initAuth(){
+  if(!sb) return;
+  const { data: { session } } = await sb.auth.getSession();
+  if(session) await loadMyProfile(session.user.id);
+  updateAuthUI();
+}
+async function loadMyProfile(uid){
+  const { data } = await sb.from('profiles').select('id,username,friend_code').eq('id', uid).single();
+  if(data){ myProfile = data; startPresence(); }
+}
+function updateAuthUI(){
+  authState.textContent = myProfile ? `ログイン中: ${myProfile.username}` : '未ログイン';
+}
+
+// ---- ログイン / 新規登録 ----
+let authMode = 'login';
+function setAuthMode(m){
+  authMode = m;
+  document.getElementById('authTitle').textContent = m === 'login' ? 'ログイン' : '新規登録';
+  document.getElementById('btnAuthSubmit').textContent = m === 'login' ? 'ログイン' : '登録する';
+  document.getElementById('btnAuthToggle').textContent = m === 'login' ? 'アカウントを作る' : 'ログインに切り替え';
+  document.getElementById('authName').classList.toggle('hidden', m === 'login');
+  authErr.textContent = '';
+}
+document.getElementById('btnAuthToggle').addEventListener('click', () => setAuthMode(authMode === 'login' ? 'signup' : 'login'));
+document.getElementById('btnAuthBack').addEventListener('click', () => show(scrTitle));
+
+document.getElementById('btnAuthSubmit').addEventListener('click', async () => {
+  const email = document.getElementById('authEmail').value.trim();
+  const pass = document.getElementById('authPass').value;
+  authErr.textContent = '';
+  if(!email || pass.length < 6){ authErr.textContent = 'メールとパスワード(6文字以上)を入力してください'; return; }
+
+  if(authMode === 'signup'){
+    const name = document.getElementById('authName').value.trim();
+    if(name.length < 2){ authErr.textContent = 'ユーザー名は2文字以上で'; return; }
+    const { data, error } = await sb.auth.signUp({ email, password: pass });
+    if(error){ authErr.textContent = '登録エラー: ' + error.message; return; }
+    // プロフィール作成 (フレンドコードは衝突したら再生成)
+    for(let i = 0; i < 5; i++){
+      const code = Array.from({length:6}, () => CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');
+      const { error: e2 } = await sb.from('profiles').insert({ id: data.user.id, username: name, friend_code: code });
+      if(!e2) break;
+      if(e2.message.includes('username')){ authErr.textContent = 'そのユーザー名は使われています'; return; }
+      if(i === 4){ authErr.textContent = 'プロフィール作成に失敗: ' + e2.message; return; }
+    }
+    await loadMyProfile(data.user.id);
+  } else {
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+    if(error){ authErr.textContent = 'ログイン失敗: ' + error.message; return; }
+    await loadMyProfile(data.user.id);
+  }
+  updateAuthUI();
+  openFriends();
+});
+
+document.getElementById('btnLogout').addEventListener('click', async () => {
+  await sb.auth.signOut();
+  if(presenceChannel){ sb.removeChannel(presenceChannel); presenceChannel = null; }
+  myProfile = null;
+  updateAuthUI();
+  show(scrTitle);
+});
+
+// ---- フレンド画面 ----
+document.getElementById('btnFriends').addEventListener('click', () => {
+  if(!sb || SUPABASE_URL.includes('xxxx')){ alert('Supabase未設定です (コード内のSUPABASE_URLを設定してください)'); return; }
+  if(myProfile) openFriends(); else { setAuthMode('login'); show(scrAuth); }
+});
+document.getElementById('btnFriendsBack').addEventListener('click', () => show(scrTitle));
+document.getElementById('btnFriendsRefresh').addEventListener('click', () => renderFriends());
+
+function openFriends(){
+  myCodeEl.textContent = myProfile.friend_code;
+  friendErr.textContent = '';
+  show(scrFriends);
+  renderFriends();
+}
+
+// ---- オンライン状態 (Realtime Presence) ----
+function startPresence(){
+  if(presenceChannel || !myProfile) return;
+  presenceChannel = sb.channel('online-users', { config: { presence: { key: myProfile.id } } });
+  presenceChannel.on('presence', { event: 'sync' }, () => {
+    if(!scrFriends.classList.contains('hidden')) renderFriends();
+  });
+  presenceChannel.subscribe(status => {
+    if(status === 'SUBSCRIBED') presenceChannel.track({ online_at: Date.now() });
+  });
+}
+function onlineIdSet(){
+  return new Set(presenceChannel ? Object.keys(presenceChannel.presenceState()) : []);
+}
+
+// ---- フレンド追加 ----
+document.getElementById('btnAddFriend').addEventListener('click', async () => {
+  const code = document.getElementById('addCodeInput').value.trim().toUpperCase();
+  friendErr.textContent = '';
+  if(code.length !== 6){ friendErr.textContent = '6文字のコードを入力してください'; return; }
+  const { data: target } = await sb.from('profiles').select('id,username').eq('friend_code', code).maybeSingle();
+  if(!target){ friendErr.textContent = 'そのコードのユーザーが見つかりません'; return; }
+  if(target.id === myProfile.id){ friendErr.textContent = 'それは自分のコードです😂'; return; }
+  // 既存関係チェック (双方向)
+  const { data: existing } = await sb.from('friendships').select('id,status')
+    .or(`and(requester.eq.${myProfile.id},addressee.eq.${target.id}),and(requester.eq.${target.id},addressee.eq.${myProfile.id})`);
+  if(existing && existing.length){
+    friendErr.textContent = existing[0].status === 'accepted' ? 'すでにフレンドです' : 'すでに申請中です';
+    return;
+  }
+  const { error } = await sb.from('friendships').insert({ requester: myProfile.id, addressee: target.id });
+  if(error){ friendErr.textContent = '申請エラー: ' + error.message; return; }
+  friendErr.textContent = '';
+  document.getElementById('addCodeInput').value = '';
+  alert(`${target.username} さんに申請を送りました!`);
+  renderFriends();
+});
+
+// ---- フレンド一覧の描画 ----
+async function renderFriends(){
+  if(!myProfile) return;
+  const { data: rows } = await sb.from('friendships')
+    .select('id,status,requester,addressee')
+    .or(`requester.eq.${myProfile.id},addressee.eq.${myProfile.id}`);
+  if(!rows){ friendListEl.innerHTML = '<div class="mini">読み込み失敗</div>'; return; }
+
+  // 相手のプロフィールをまとめて取得
+  const otherIds = [...new Set(rows.map(r => r.requester === myProfile.id ? r.addressee : r.requester))];
+  let profiles = {};
+  if(otherIds.length){
+    const { data: ps } = await sb.from('profiles').select('id,username').in('id', otherIds);
+    (ps || []).forEach(p => profiles[p.id] = p);
+  }
+  const online = onlineIdSet();
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const nameOf = id => esc(profiles[id] ? profiles[id].username : '???');
+
+  // 届いた申請 (自分がaddresseeでpending)
+  const incoming = rows.filter(r => r.status === 'pending' && r.addressee === myProfile.id);
+  pendingLabel.style.display = incoming.length ? '' : 'none';
+  pendingListEl.innerHTML = '';
+  for(const r of incoming){
+    const row = document.createElement('div');
+    row.className = 'frow';
+    row.innerHTML = `<span class="nm">${nameOf(r.requester)}</span>`;
+    const ok = document.createElement('button');
+    ok.textContent = '承認';
+    ok.onclick = async () => { await sb.from('friendships').update({ status:'accepted' }).eq('id', r.id); renderFriends(); };
+    const ng = document.createElement('button');
+    ng.textContent = '拒否'; ng.className = 'pink';
+    ng.onclick = async () => { await sb.from('friendships').delete().eq('id', r.id); renderFriends(); };
+    row.append(ok, ng);
+    pendingListEl.appendChild(row);
+  }
+
+  // フレンド (accepted) + 送信中の申請
+  friendListEl.innerHTML = '';
+  const accepted = rows.filter(r => r.status === 'accepted');
+  const outgoing = rows.filter(r => r.status === 'pending' && r.requester === myProfile.id);
+  if(!accepted.length && !outgoing.length){
+    friendListEl.innerHTML = '<div class="mini">まだフレンドがいません。コードを交換して追加しよう!</div>';
+  }
+  for(const r of accepted){
+    const otherId = r.requester === myProfile.id ? r.addressee : r.requester;
+    const row = document.createElement('div');
+    row.className = 'frow';
+    row.innerHTML = `<span class="dot ${online.has(otherId) ? 'on' : ''}"></span><span class="nm">${nameOf(otherId)}</span><span class="mini">${online.has(otherId) ? 'オンライン' : 'オフライン'}</span>`;
+    const del = document.createElement('button');
+    del.textContent = '削除'; del.className = 'pink';
+    del.onclick = async () => { if(confirm(`${nameOf(otherId)} をフレンドから削除する?`)){ await sb.from('friendships').delete().eq('id', r.id); renderFriends(); } };
+    row.appendChild(del);
+    friendListEl.appendChild(row);
+  }
+  for(const r of outgoing){
+    const row = document.createElement('div');
+    row.className = 'frow';
+    row.innerHTML = `<span class="dot"></span><span class="nm">${nameOf(r.addressee)}</span><span class="mini">申請中...</span>`;
+    friendListEl.appendChild(row);
+  }
+}
+
+initAuth();
 })();
 </script>
 </body>
