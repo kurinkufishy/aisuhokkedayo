@@ -81,7 +81,17 @@
   <input type="text" id="joinInput" maxlength="4" placeholder="CODE" autocomplete="off">
   <button id="btnJoin" class="pink">ルームに参加</button>
   <div class="err" id="onlineErr"></div>
+  <button id="btnDiag" class="ghost">🔧 接続診断</button>
   <button id="btnBackTitle" class="ghost">← 戻る</button>
+</div>
+
+<!-- 接続診断 -->
+<div id="scrDiag" class="overlay hidden">
+  <h2>🔧 接続診断</h2>
+  <div id="diagLog" style="text-align:left;font-size:14px;line-height:2;background:#101a36;border:1px solid #2c3d6e;border-radius:12px;padding:16px 20px;min-width:min(480px,85vw);min-height:160px"></div>
+  <div class="sub" id="diagVerdict" style="max-width:520px"></div>
+  <button id="btnDiagRun">診断を実行</button>
+  <button id="btnDiagBack" class="ghost">← 戻る</button>
 </div>
 
 <!-- ルーム待機 (ホスト) -->
@@ -722,6 +732,73 @@ document.getElementById('btnRematch').addEventListener('click', () => {
 });
 document.getElementById('btnToTitle').addEventListener('click', () => { cleanupNet(); phase = 'idle'; mode = 'local'; show(scrTitle); });
 document.getElementById('btnDiscTitle').addEventListener('click', () => { phase = 'idle'; mode = 'local'; show(scrTitle); });
+
+// ===== 接続診断 =====
+const scrDiag = document.getElementById('scrDiag');
+const diagLog = document.getElementById('diagLog');
+const diagVerdict = document.getElementById('diagVerdict');
+allScreens.push(scrDiag);
+document.getElementById('btnDiag').addEventListener('click', () => { diagLog.innerHTML = ''; diagVerdict.textContent = ''; show(scrDiag); });
+document.getElementById('btnDiagBack').addEventListener('click', () => show(scrOnline));
+
+function dlog(msg){ diagLog.innerHTML += msg + '<br>'; }
+
+function testSignaling(){
+  return new Promise(res => {
+    dlog('1️⃣ シグナリングサーバー (wss://0.peerjs.com) ...');
+    let done = false;
+    const finish = ok => { if(done) return; done = true; dlog(ok ? '&nbsp;&nbsp;✅ 接続OK' : '&nbsp;&nbsp;❌ 接続できない'); res(ok); };
+    try{
+      const ws = new WebSocket('wss://0.peerjs.com/peerjs?key=peerjs&id=diag' + Math.random().toString(36).slice(2) + '&token=t' + Date.now());
+      const to = setTimeout(() => { try{ws.close();}catch(e){} finish(false); }, 7000);
+      ws.onopen = () => { clearTimeout(to); ws.close(); finish(true); };
+      ws.onerror = () => { clearTimeout(to); finish(false); };
+    }catch(e){ finish(false); }
+  });
+}
+function testIce(label, servers, policy, want){
+  return new Promise(res => {
+    dlog(label);
+    let found = false;
+    let pc;
+    try{
+      pc = new RTCPeerConnection({ iceServers: servers, iceTransportPolicy: policy });
+      pc.createDataChannel('d');
+      pc.onicecandidate = e => {
+        if(e.candidate && e.candidate.candidate.includes(want)) found = true;
+      };
+      pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {});
+    }catch(e){
+      dlog('&nbsp;&nbsp;❌ WebRTC自体が使えない (ブラウザがブロック)');
+      res(false); return;
+    }
+    setTimeout(() => {
+      dlog(found ? '&nbsp;&nbsp;✅ OK' : '&nbsp;&nbsp;❌ 失敗');
+      try{pc.close();}catch(e){}
+      res(found);
+    }, 7000);
+  });
+}
+document.getElementById('btnDiagRun').addEventListener('click', async () => {
+  diagLog.innerHTML = ''; diagVerdict.textContent = '診断中... (20秒ほどかかります)';
+  if(typeof RTCPeerConnection === 'undefined'){
+    dlog('❌ このブラウザはWebRTC非対応です');
+    diagVerdict.textContent = '判定: このブラウザではネット対戦不可。SafariかChromeで開いてください。';
+    return;
+  }
+  const sig = await testSignaling();
+  const stun = await testIce('2️⃣ STUN (NAT越え・直接P2P) ...',
+    [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun.cloudflare.com:3478'}], 'all', 'srflx');
+  const turn = await testIce('3️⃣ TURN (中継サーバー) ...',
+    [{urls:'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject'},
+     {urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject'}], 'relay', 'relay');
+  let v;
+  if(!sig) v = '判定: シグナリングサーバーへの接続がブロックされています。フィルタリング/ネットワークの制限が原因。別ブラウザ or 別回線(テザリング等)で試してください。';
+  else if(!stun && !turn) v = '判定: WebRTCの通信が全てブロックされています。フィルタリングソフトかネットワークのファイアウォールが原因の可能性大。';
+  else if(stun) v = '判定: このデバイスは正常です!相手側でも同じ診断を実行してください。両方✅なのに繋がらない場合は両者のNAT相性の問題です。';
+  else v = '判定: 直接P2P(STUN)は不可、TURN中継のみ可。接続に時間がかかるか不安定になる可能性があります。';
+  diagVerdict.textContent = v;
+});
 })();
 </script>
 </body>
