@@ -88,7 +88,8 @@
 <div id="scrWait" class="overlay hidden">
   <h2>ルームコード</h2>
   <div id="roomCode">----</div>
-  <div class="sub">このコードを相手に送ってください<br>相手が参加すると自動でスタートします</div>
+  <div class="sub" id="waitStatus">準備中...</div>
+  <div class="sub" style="opacity:.6">相手が参加すると自動でスタートします</div>
   <div class="spin"></div>
   <button id="btnCancelWait" class="ghost">キャンセル</button>
 </div>
@@ -96,6 +97,7 @@
 <!-- 接続中 (ゲスト) -->
 <div id="scrConnecting" class="overlay hidden">
   <h2>接続中...</h2>
+  <div class="sub" id="connStatus">サーバーに接続中...</div>
   <div class="spin"></div>
   <button id="btnCancelConn" class="ghost">キャンセル</button>
 </div>
@@ -161,6 +163,22 @@ let lastPing = 0, pingMs = null;
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const PEER_PREFIX = 'neonhockey-v1-';
 
+// STUN/TURNサーバー設定 (NAT越え用)
+const PEER_OPTS = {
+  debug: 2,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      // 無料TURN (Open Relay Project) — 厳しいNAT環境用のフォールバック
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    ]
+  }
+};
+
 function genCode(){
   let c = '';
   for(let i=0;i<4;i++) c += CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)];
@@ -180,13 +198,18 @@ function send(msg){
 function createRoom(){
   cleanupNet();
   const code = genCode();
-  roomCodeEl.textContent = code;
+  roomCodeEl.textContent = '...';
+  waitStatus.textContent = 'サーバーに登録中...';
   show(scrWait);
-  peer = new Peer(PEER_PREFIX + code);
+  peer = new Peer(PEER_PREFIX + code, PEER_OPTS);
   peer.on('open', () => {
+    // 登録完了してからコードを表示 (これでゲストが必ず見つけられる)
+    roomCodeEl.textContent = code;
+    waitStatus.textContent = 'このコードを相手に送ってください';
     peer.on('connection', c => {
       if(conn){ c.close(); return; } // 満室
       conn = c;
+      waitStatus.textContent = '相手が見つかりました!接続中...';
       setupConn();
       conn.on('open', () => {
         mode = 'host';
@@ -195,10 +218,14 @@ function createRoom(){
       });
     });
   });
+  peer.on('disconnected', () => {
+    // シグナリングサーバーから切断 → 自動再接続
+    if(peer && !peer.destroyed) peer.reconnect();
+  });
   peer.on('error', err => {
     if(err.type === 'unavailable-id'){ createRoom(); return; } // コード衝突→再生成
     show(scrOnline);
-    onlineErr.textContent = '接続エラー: ' + err.type;
+    onlineErr.textContent = 'エラー: ' + err.type + ' (シグナリングサーバーに接続できない可能性)';
     cleanupNet();
   });
 }
@@ -206,27 +233,57 @@ function createRoom(){
 // ゲスト: 参加
 function joinRoom(code){
   cleanupNet();
+  connStatus.textContent = 'サーバーに接続中...';
   show(scrConnecting);
-  peer = new Peer();
+  peer = new Peer(PEER_OPTS);
+  let opened = false, cancelled = false;
+  joinCancel = () => { cancelled = true; };
+
   peer.on('open', () => {
+    if(cancelled) return;
+    connStatus.textContent = 'ルームを検索中...';
     conn = peer.connect(PEER_PREFIX + code, { reliable:false });
-    let opened = false;
-    conn.on('open', () => { opened = true; setupConn(); });
+    conn.on('open', () => {
+      opened = true;
+      connStatus.textContent = '接続完了!';
+      setupConn();
+    });
     conn.on('data', d => { if(d.t === 'hello'){ winPoints = d.winPoints; mode = 'guest'; } });
+
+    // ICE(P2P経路確立)の進行状況を監視
+    const watchIce = setInterval(() => {
+      if(opened || cancelled){ clearInterval(watchIce); return; }
+      const pc = conn.peerConnection;
+      if(pc){
+        const st = pc.iceConnectionState;
+        if(st === 'checking') connStatus.textContent = 'ルーム発見!P2P経路を確立中...';
+        if(st === 'failed'){
+          clearInterval(watchIce);
+          cleanupNet();
+          show(scrOnline);
+          onlineErr.textContent = 'P2P接続に失敗 (ネットワークがWebRTCをブロックしている可能性)';
+        }
+      }
+    }, 500);
+
     setTimeout(() => {
-      if(!opened){
+      if(!opened && !cancelled){
         cleanupNet();
         show(scrOnline);
-        onlineErr.textContent = 'ルームが見つかりません。コードを確認してください';
+        onlineErr.textContent = 'タイムアウト。コード確認 or 両方ページを再読み込みして再試行を';
       }
-    }, 8000);
+    }, 20000);
   });
   peer.on('error', err => {
+    if(cancelled) return;
     show(scrOnline);
-    onlineErr.textContent = err.type === 'peer-unavailable' ? 'ルームが見つかりません' : '接続エラー: ' + err.type;
+    onlineErr.textContent = err.type === 'peer-unavailable'
+      ? 'ルームが見つかりません (ホスト側にコードが表示されてから参加してください)'
+      : '接続エラー: ' + err.type;
     cleanupNet();
   });
 }
+let joinCancel = () => {};
 
 function setupConn(){
   conn.on('data', onNetData);
@@ -292,6 +349,8 @@ const scrWin = document.getElementById('scrWin');
 const scrDisc = document.getElementById('scrDisc');
 const roomCodeEl = document.getElementById('roomCode');
 const onlineErr = document.getElementById('onlineErr');
+const waitStatus = document.getElementById('waitStatus');
+const connStatus = document.getElementById('connStatus');
 const pingBadge = document.getElementById('pingBadge');
 const allScreens = [scrTitle, scrOnline, scrWait, scrConnecting, scrWin, scrDisc];
 function show(scr){
@@ -656,7 +715,7 @@ document.getElementById('btnJoin').addEventListener('click', () => {
 });
 document.getElementById('joinInput').addEventListener('keydown', e => { if(e.key === 'Enter') document.getElementById('btnJoin').click(); });
 document.getElementById('btnCancelWait').addEventListener('click', () => { cleanupNet(); show(scrOnline); });
-document.getElementById('btnCancelConn').addEventListener('click', () => { cleanupNet(); show(scrOnline); });
+document.getElementById('btnCancelConn').addEventListener('click', () => { joinCancel(); cleanupNet(); show(scrOnline); });
 document.getElementById('btnRematch').addEventListener('click', () => {
   if(mode === 'local' || mode === 'host') startMatch();
   else send({ t:'rematch' }); // ゲスト → ホストに再戦要求
