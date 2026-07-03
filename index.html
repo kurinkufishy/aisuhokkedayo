@@ -102,6 +102,7 @@
     <button id="btnCasino" class="ghost">🎰 ルーレット</button>
   </div>
   <div class="sub mini" id="authState">未ログイン</div>
+  <div class="mini" style="opacity:.4">v2.1</div>
   <div class="sub" style="opacity:.6">
     操作 — タッチ:ドラッグ / ⌨️ <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or 矢印キー
   </div>
@@ -213,7 +214,7 @@
   <div id="csWheel" style="font-size:60px;font-weight:800;min-height:76px;color:var(--puck)">×?</div>
   <button id="btnSpin" class="pink">スピン!</button>
   <div class="sub" id="csResult" style="min-height:24px"></div>
-  <div class="mini">倍率: ×0 / ×0.5 / ×2 / ×5 / ×10 / ×500</div>
+  <div class="mini">倍率: ×0 / ×0.5 / ×1 / ×2 / ×5 / ×10 / ×500</div>
   <button id="btnCasinoBack" class="ghost">← 戻る</button>
 </div>
 
@@ -636,6 +637,12 @@ function updatePuck(){
       pk.vx -= 2*dot*nx; pk.vy -= 2*dot*ny;
       pk.vx = pk.vx*.55 + p.vx*1.35 + nx*3;
       pk.vy = pk.vy*.55 + p.vy*1.35 + ny*3;
+      // anti-pin: 衝突解決で壁の外に押し出されたら、壁内に戻し壁から離れる速度を保証
+      const g2 = pk.x > (W-GOAL_W)/2 && pk.x < (W+GOAL_W)/2;
+      if(pk.y < PUCK_R && !g2){ pk.y = PUCK_R; pk.vy = Math.max(pk.vy, 2.5); }
+      if(pk.y > H-PUCK_R && !g2){ pk.y = H-PUCK_R; pk.vy = Math.min(pk.vy, -2.5); }
+      if(pk.x < PUCK_R){ pk.x = PUCK_R; pk.vx = Math.max(pk.vx, 2.5); }
+      if(pk.x > W-PUCK_R){ pk.x = W-PUCK_R; pk.vx = Math.min(pk.vx, -2.5); }
       hitFx(pk.x - nx*PUCK_R, pk.y - ny*PUCK_R, color);
     }
   }
@@ -1365,7 +1372,9 @@ let cpuStuckT = 0, cpuRetreat = 0, cpuRetreatX = W/2;
 let puckWatch = { x: 0, y: 0, t: 0 };
 // パックの「位置」が動いてないことで詰みを検知 (速度は衝突ジッタで当てにならない)
 function checkPuckStuck(){
-  if(Math.hypot(sim.puck.x - puckWatch.x, sim.puck.y - puckWatch.y) > 18){
+  // プレイヤー側に置きっぱなしのパックには介入しない
+  if(sim.puck.y > H/2){ puckWatch = { x: sim.puck.x, y: sim.puck.y, t: 0 }; return; }
+  if(Math.hypot(sim.puck.x - puckWatch.x, sim.puck.y - puckWatch.y) > 45){
     puckWatch = { x: sim.puck.x, y: sim.puck.y, t: 0 };
   } else if(++puckWatch.t > 75){ // 約1.2秒動いていない → 救出
     // プレイヤー側の中央めがけて射出 (CPU陣地からしっかり出す)
@@ -1536,8 +1545,8 @@ btnRoll.addEventListener('click', async () => {
 
 // ---- ルーレット ----
 const ROULETTE = [
-  { m: 0,   p: 62.48 }, { m: 0.5, p: 15 }, { m: 2, p: 15 },
-  { m: 5,   p: 6 },     { m: 10,  p: 1.5 }, { m: 500, p: 0.02 },
+  { m: 0,   p: 49.99 }, { m: 0.5, p: 18 }, { m: 1, p: 12 }, { m: 2, p: 13 },
+  { m: 5,   p: 5 },     { m: 10,  p: 2 },  { m: 500, p: 0.01 },
 ];
 const csCoins = document.getElementById('csCoins');
 const csWheel = document.getElementById('csWheel');
@@ -1557,7 +1566,7 @@ document.getElementById('btnSpin').addEventListener('click', () => {
   // 結果を先に抽選
   const r = Math.random()*100; let acc = 0, mult = 0;
   for(const o of ROULETTE){ acc += o.p; if(r < acc){ mult = o.m; break; } }
-  const opts = [0, 0.5, 2, 5, 10, 500];
+  const opts = [0, 0.5, 1, 2, 5, 10, 500];
   let t = 0;
   const iv = setInterval(async () => {
     csWheel.textContent = '×' + opts[Math.floor(Math.random()*opts.length)];
@@ -1567,7 +1576,7 @@ document.getElementById('btnSpin').addEventListener('click', () => {
       const payout = Math.floor(curBet * mult);
       const { data } = await sb.from('profiles').update({ coins: myProfile.coins - curBet + payout }).eq('id', myProfile.id).select().single();
       if(data) myProfile = data;
-      csResult.textContent = mult === 0 ? `😇 ハズレ... -${curBet}コイン` : mult === 500 ? `🎊🎊 ジャックポット×500!! +${payout}コイン!!` : `🎉 ×${mult}! +${payout}コイン`;
+      csResult.textContent = mult === 0 ? `😇 ハズレ... -${curBet}コイン` : mult === 500 ? `🎊🎊 ジャックポット×500!! +${payout}コイン!!` : mult === 1 ? `😮 ×1、賭け金が返ってきた` : `🎉 ×${mult}! +${payout}コイン`;
       csCoins.textContent = '🪙 ' + myProfile.coins;
       updateAuthUI();
       spinning = false;
