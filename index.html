@@ -61,6 +61,14 @@
   .bubble.me{align-self:flex-end;background:#0a3d4a;border:1px solid rgba(0,229,255,.4);border-bottom-right-radius:4px}
   .bubble.them{align-self:flex-start;background:#3d1029;border:1px solid rgba(255,46,136,.4);border-bottom-left-radius:4px}
   .bubble .t{display:block;font-size:10px;opacity:.5;margin-top:4px}
+  .avatar{display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center;border-radius:50%;background:#182448;font-size:18px;flex:none;border:2px solid transparent}
+  .fr_f_cyan{border-color:var(--p1);box-shadow:0 0 8px rgba(0,229,255,.6)}
+  .fr_f_pink{border-color:var(--p2);box-shadow:0 0 8px rgba(255,46,136,.6)}
+  .fr_f_gold{border-color:#ffd700;box-shadow:0 0 10px rgba(255,215,0,.7)}
+  .fr_f_rainbow{border-color:#f0f;animation:hue 2s linear infinite}
+  @keyframes hue{to{filter:hue-rotate(360deg)}}
+  .rN{color:#9aa3c0}.rR{color:#4da3ff}.rSR{color:#c44dff}.rUR{color:#ffd700;text-shadow:0 0 8px rgba(255,215,0,.5)}
+  .btnrow{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
   .spin{width:40px;height:40px;border:4px solid #2c3d6e;border-top-color:var(--p1);border-radius:50%;animation:sp 0.9s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
   .err{color:#ff8080;font-size:14px;min-height:20px}
@@ -72,6 +80,14 @@
 <body>
 <div id="wrap"><canvas id="cv"></canvas></div>
 <div id="pingBadge" class="hidden">-- ms</div>
+<button id="pauseBtn" class="hidden" style="position:fixed;top:10px;left:12px;z-index:5;padding:8px 16px;font-size:16px;background:rgba(16,24,48,.85);color:var(--text);border:1px solid #2c3d6e;box-shadow:none">⏸</button>
+
+<!-- ポーズ (CPU戦) -->
+<div id="scrPause" class="overlay hidden">
+  <h2>⏸ 一時停止</h2>
+  <button id="btnResume">▶ 再開</button>
+  <button id="btnPauseTitle" class="pink">タイトルへ</button>
+</div>
 
 <!-- タイトル -->
 <div id="scrTitle" class="overlay">
@@ -79,7 +95,12 @@
   <div class="sub">ネオン・エアホッケー対戦</div>
   <button id="btnOnline">🌐 ネット対戦</button>
   <button id="btnLocal" class="pink">📱 ローカル対戦 (1台で2人)</button>
-  <button id="btnFriends" class="ghost">👥 フレンド</button>
+  <button id="btnCpu" style="background:linear-gradient(90deg,#3dff8b,#7dffb8)">🤖 CPU対戦</button>
+  <div class="btnrow">
+    <button id="btnFriends" class="ghost">👥 フレンド</button>
+    <button id="btnGacha" class="ghost">🎁 ガチャ</button>
+    <button id="btnCasino" class="ghost">🎰 ルーレット</button>
+  </div>
   <div class="sub mini" id="authState">未ログイン</div>
   <div class="sub" style="opacity:.6">
     操作 — タッチ:ドラッグ / ⌨️ <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or 矢印キー
@@ -157,6 +178,45 @@
   <button id="btnDmBack" class="ghost">← フレンド一覧へ</button>
 </div>
 
+<!-- CPU対戦 -->
+<div id="scrCpu" class="overlay hidden">
+  <h2>🤖 CPU対戦</h2>
+  <div class="sub">難易度を選んでスタート (5点先取)</div>
+  <button data-d="easy" class="cpuBtn">😊 よわい</button>
+  <button data-d="normal" class="cpuBtn pink">😼 ふつう</button>
+  <button data-d="hard" class="cpuBtn" style="background:linear-gradient(90deg,#ffd700,#ff8c00)">👿 つよい</button>
+  <button id="btnCpuBack" class="ghost">← 戻る</button>
+</div>
+
+<!-- ガチャ -->
+<div id="scrGacha" class="overlay hidden">
+  <h2>🎁 ガチャ</h2>
+  <div class="sub" id="gcCoins">🪙 --</div>
+  <button id="btnRoll">ガチャを回す (🪙100)</button>
+  <div id="gcResult" class="sub" style="min-height:56px"></div>
+  <div class="sub mini">持ち物 (「装備」で身につける)</div>
+  <div class="flist" id="gcInv"></div>
+  <button id="btnGachaBack" class="ghost">← 戻る</button>
+</div>
+
+<!-- ルーレット -->
+<div id="scrCasino" class="overlay hidden">
+  <h2>🎰 ルーレット</h2>
+  <div class="sub" id="csCoins">🪙 --</div>
+  <div class="sub mini">ベット額</div>
+  <div class="pts" id="betRow">
+    <button data-b="10" class="sel">10</button>
+    <button data-b="50">50</button>
+    <button data-b="100">100</button>
+    <button data-b="500">500</button>
+  </div>
+  <div id="csWheel" style="font-size:60px;font-weight:800;min-height:76px;color:var(--puck)">×?</div>
+  <button id="btnSpin" class="pink">スピン!</button>
+  <div class="sub" id="csResult" style="min-height:24px"></div>
+  <div class="mini">倍率: ×0 / ×0.5 / ×2 / ×5 / ×10 / ×500</div>
+  <button id="btnCasinoBack" class="ghost">← 戻る</button>
+</div>
+
 <!-- ルーム待機 (ホスト) -->
 <div id="scrWait" class="overlay hidden">
   <h2>ルームコード</h2>
@@ -194,6 +254,7 @@
 (() => {
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
+const pauseBtnEl = document.getElementById('pauseBtn');
 
 // ===== 定数 =====
 const W = 600, H = 1000;
@@ -630,9 +691,14 @@ function spark(x, y, color){
   for(let i=0;i<6;i++) particles.push({x, y, vx:(Math.random()-.5)*8, vy:(Math.random()-.5)*8, life:20, color});
 }
 function burst(x, y, color){
+  let palette = null;
+  const fx = myProfile ? myProfile.goalfx : '';
+  if(fx === 'g_gold') palette = ['#ffd700', '#ffec8b', '#ffa500'];
+  if(fx === 'g_sakura') palette = ['#ffb7d5', '#ff8fc0', '#ffffff'];
   for(let i=0;i<40;i++){
     const a = Math.random()*Math.PI*2, s = 2+Math.random()*10;
-    particles.push({x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:40+Math.random()*20, color});
+    const c = palette ? palette[Math.floor(Math.random()*palette.length)] : color;
+    particles.push({x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:40+Math.random()*20, color:c});
   }
 }
 
@@ -714,6 +780,7 @@ let frame = 0;
 function loop(){
   frame++;
   const active = phase === 'play' || phase === 'countdown' || phase === 'goalpause';
+  pauseBtnEl.classList.toggle('hidden', !(mode === 'cpu' && phase === 'play'));
 
   if(mode === 'local'){
     if(active){
@@ -725,6 +792,17 @@ function loop(){
       if(t2) movePaddle(sim.p2, t2.x, t2.y, 0, H/2);
       else { const [dx,dy] = keyDelta(['arrows']); if(dx||dy){ const m = Math.hypot(dx,dy); movePaddle(sim.p2, sim.p2.x+dx/m*PADDLE_SPD, sim.p2.y+dy/m*PADDLE_SPD, 0, H/2); } else sim.p2.vx = sim.p2.vy = 0; }
       if(phase === 'play') updatePuck();
+      tickCountdown();
+      draw({ bot:sim.p1, top:sim.p2, puck:sim.puck, botScore:sim.p1.score, topScore:sim.p2.score, botColor:C_HOST, topColor:C_GUEST });
+    }
+  }
+  else if(mode === 'cpu'){
+    if(active){
+      readMyInput(myPad, ['wasd','arrows']);
+      movePaddle(sim.p1, myPad.x, myPad.y, H/2, H);
+      myPad.x = sim.p1.x; myPad.y = sim.p1.y;
+      updateCpu();
+      if(phase === 'play'){ updatePuck(); checkPuckStuck(); }
       tickCountdown();
       draw({ bot:sim.p1, top:sim.p2, puck:sim.puck, botScore:sim.p1.score, topScore:sim.p2.score, botColor:C_HOST, topColor:C_GUEST });
     }
@@ -787,6 +865,7 @@ const winText = document.getElementById('winText');
 const finalScore = document.getElementById('finalScore');
 // online: showWin(didIWin, myScore, oppScore) / local: showWin(null, s1, s2, winner)
 function showWin(didIWin, a, b, localWinner){
+  if(didIWin !== null) awardResult(didIWin, mode === 'cpu');
   if(didIWin === null){
     winText.textContent = `PLAYER ${localWinner} の勝ち!`;
     winText.className = 'winner win';
@@ -929,11 +1008,14 @@ async function initAuth(){
   updateAuthUI();
 }
 async function loadMyProfile(uid){
-  const { data } = await sb.from('profiles').select('id,username,friend_code').eq('id', uid).single();
+  const { data } = await sb.from('profiles').select('*').eq('id', uid).single();
   if(data){ myProfile = data; startPresence(); }
 }
+function levelOf(xp){ return Math.floor(Math.sqrt((xp || 0) / 50)) + 1; }
 function updateAuthUI(){
-  authState.textContent = myProfile ? `ログイン中: ${myProfile.username}` : '未ログイン';
+  authState.textContent = myProfile
+    ? `ログイン中: ${myProfile.username} | Lv.${levelOf(myProfile.xp)} | 🪙${myProfile.coins}`
+    : '未ログイン';
 }
 
 // ---- ログイン / 新規登録 ----
@@ -1118,6 +1200,10 @@ async function loadDM(scrollToEnd){
     dmList.appendChild(b);
   }
   if(scrollToEnd || nearBottom) dmList.scrollTop = dmList.scrollHeight;
+  // 表示したものを既読化
+  sb.from('messages').update({ read_at: new Date().toISOString() })
+    .eq('recipient', myProfile.id).eq('sender', dmFriend.id).is('read_at', null)
+    .then(() => refreshUnreadBadge());
 }
 // DM画面表示中は3秒ごとに更新
 setInterval(() => { if(dmFriend && !scrDM.classList.contains('hidden')) loadDM(false); }, 3000);
@@ -1173,9 +1259,10 @@ async function renderFriends(){
   const otherIds = [...new Set(rows.map(r => r.requester === myProfile.id ? r.addressee : r.requester))];
   let profiles = {};
   if(otherIds.length){
-    const { data: ps } = await sb.from('profiles').select('id,username').in('id', otherIds);
+    const { data: ps } = await sb.from('profiles').select('id,username,icon,frame,title,xp').in('id', otherIds);
     (ps || []).forEach(p => profiles[p.id] = p);
   }
+  const unread = await fetchUnread();
   const online = onlineIdSet();
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const nameOf = id => esc(profiles[id] ? profiles[id].username : '???');
@@ -1228,14 +1315,20 @@ async function renderFriends(){
   for(const r of accepted){
     const otherId = r.requester === myProfile.id ? r.addressee : r.requester;
     const isOn = online.has(otherId);
+    const pr = profiles[otherId] || {};
     const rc = rec[otherId];
     const recText = rc ? `${rc.w}勝${rc.l}敗` : (isOn ? 'オンライン' : 'オフライン');
+    const titleTxt = pr.title ? `「${esc(itemV(pr.title))}」` : '';
     const row = document.createElement('div');
     row.className = 'frow';
-    row.innerHTML = `<span class="dot ${isOn ? 'on' : ''}"></span><span class="nm">${nameOf(otherId)}</span><span class="mini">${recText}</span>`;
+    row.innerHTML = `<span class="dot ${isOn ? 'on' : ''}"></span>`
+      + `<span class="avatar ${pr.frame ? 'fr_' + esc(pr.frame) : ''}">${esc(pr.icon || '😀')}</span>`
+      + `<span class="nm">${nameOf(otherId)} <span class="mini">Lv.${levelOf(pr.xp)} ${titleTxt}</span></span>`
+      + `<span class="mini">${recText}</span>`;
     const dm = document.createElement('button');
-    dm.textContent = '💬';
-    dm.onclick = () => openDM(otherId, profiles[otherId] ? profiles[otherId].username : '???');
+    dm.textContent = unread[otherId] ? `💬${unread[otherId]}` : '💬';
+    if(unread[otherId]) dm.style.background = 'linear-gradient(90deg,#ff2e88,#ff7ab5)';
+    dm.onclick = () => openDM(otherId, pr.username || '???');
     row.appendChild(dm);
     if(isOn){
       const vs = document.createElement('button');
@@ -1256,6 +1349,256 @@ async function renderFriends(){
     friendListEl.appendChild(row);
   }
 }
+
+// ===================================================================
+// CPU対戦 / 報酬 / ガチャ / ルーレット / DM未読
+// ===================================================================
+
+// ---- CPU AI ----
+const CPU_LEVELS = {
+  easy:   { spd: 5.5,  err: 70, aggro: 0.50 },
+  normal: { spd: 8,    err: 34, aggro: 0.62 },
+  hard:   { spd: 11.5, err: 10, aggro: 0.78 },
+};
+let cpuCfg = CPU_LEVELS.normal;
+let cpuStuckT = 0, cpuRetreat = 0, cpuRetreatX = W/2;
+let puckWatch = { x: 0, y: 0, t: 0 };
+// パックの「位置」が動いてないことで詰みを検知 (速度は衝突ジッタで当てにならない)
+function checkPuckStuck(){
+  if(Math.hypot(sim.puck.x - puckWatch.x, sim.puck.y - puckWatch.y) > 18){
+    puckWatch = { x: sim.puck.x, y: sim.puck.y, t: 0 };
+  } else if(++puckWatch.t > 75){ // 約1.2秒動いていない → 救出
+    // プレイヤー側の中央めがけて射出 (CPU陣地からしっかり出す)
+    const dx = W/2 - sim.puck.x, dy = H * 0.7 - sim.puck.y;
+    const m = Math.hypot(dx, dy) || 1;
+    sim.puck.vx = dx/m * 10;
+    sim.puck.vy = dy/m * 10;
+    // CPUはパックの通り道と反対サイドへ退避 (自分で弾き返さないように)
+    cpuRetreatX = sim.puck.x < W/2 ? W * 0.78 : W * 0.22;
+    cpuRetreat = 70;
+    spark(sim.puck.x, sim.puck.y, '#f8f32b');
+    puckWatch = { x: sim.puck.x, y: sim.puck.y, t: 0 };
+  }
+}
+function inCorner(x, y){
+  return y < 130 && (x < 130 || x > W - 130);
+}
+function updateCpu(){
+  const p = sim.p2, pk = sim.puck;
+  // 角に張り付いたパックは追わない (押し付けると詰むので、救出ナッジに任せる)
+  const cornerTrap = inCorner(pk.x, pk.y) && Math.hypot(pk.vx, pk.vy) < 3;
+
+  let tx, ty;
+  if(cpuRetreat > 0){
+    cpuRetreat--;
+    tx = cpuRetreatX; ty = 130; // 通り道を空けて退避
+  } else if(cornerTrap){
+    // 角詰みパックには近づかず、反対サイドで待機
+    tx = pk.x < W/2 ? W * 0.78 : W * 0.22;
+    ty = 160;
+  } else if(pk.y < H * cpuCfg.aggro){
+    // 「相手ゴールへ押し出せる位置」= パックの後ろ側に回り込む
+    const dx = W/2 - pk.x, dy = H - pk.y;
+    const m = Math.hypot(dx, dy) || 1;
+    tx = pk.x - dx/m * (PADDLE_R + PUCK_R) * 0.9 + (Math.random() - .5) * cpuCfg.err;
+    ty = pk.y - dy/m * (PADDLE_R + PUCK_R) * 0.9;
+  } else {
+    tx = W/2 + (pk.x - W/2) * 0.35;
+    ty = 140;
+  }
+  const dx2 = tx - p.x, dy2 = ty - p.y, m2 = Math.hypot(dx2, dy2) || 1;
+  const step = Math.min(m2, cpuCfg.spd);
+  movePaddle(p, p.x + dx2/m2*step, p.y + dy2/m2*step, 0, H/2);
+}
+const scrCpu = document.getElementById('scrCpu');
+const scrGacha = document.getElementById('scrGacha');
+const scrCasino = document.getElementById('scrCasino');
+allScreens.push(scrCpu, scrGacha, scrCasino);
+document.getElementById('btnCpu').addEventListener('click', () => show(scrCpu));
+document.getElementById('btnCpuBack').addEventListener('click', () => show(scrTitle));
+document.querySelectorAll('.cpuBtn').forEach(b => b.addEventListener('click', () => {
+  cleanupNet();
+  cpuCfg = CPU_LEVELS[b.dataset.d];
+  cpuStuckT = 0; cpuRetreat = 0;
+  mode = 'cpu';
+  winPoints = 5;
+  startMatch();
+}));
+
+// ---- ポーズ (CPU戦のみ) ----
+const scrPause = document.getElementById('scrPause');
+allScreens.push(scrPause);
+function pauseGame(){
+  if(mode !== 'cpu' || phase !== 'play') return;
+  phase = 'paused';
+  show(scrPause);
+}
+pauseBtnEl.addEventListener('click', pauseGame);
+window.addEventListener('keydown', e => {
+  if(mode !== 'cpu') return;
+  if(e.key === 'Escape' || e.key.toLowerCase() === 'p'){
+    if(phase === 'play') pauseGame();
+    else if(phase === 'paused'){ phase = 'play'; show(null); }
+  }
+});
+document.getElementById('btnResume').addEventListener('click', () => { phase = 'play'; show(null); });
+document.getElementById('btnPauseTitle').addEventListener('click', () => { phase = 'idle'; mode = 'local'; show(scrTitle); });
+
+// ---- 試合報酬 (XP & コイン) ----
+async function awardResult(won, vsCpu){
+  if(!sb || !myProfile) return;
+  const xp = vsCpu ? (won ? 25 : 10) : (won ? 50 : 20);
+  const co = vsCpu ? (won ? 15 : 5)  : (won ? 30 : 10);
+  const { data } = await sb.from('profiles')
+    .update({ xp: myProfile.xp + xp, coins: myProfile.coins + co })
+    .eq('id', myProfile.id).select().single();
+  if(data) myProfile = data;
+  updateAuthUI();
+}
+
+// ---- アイテムカタログ (ガチャ排出) ----
+const ITEMS = [
+  { id:'i_cat',    t:'icon',  v:'🐱', r:'N' },  { id:'i_dog',   t:'icon', v:'🐶', r:'N' },
+  { id:'i_fox',    t:'icon',  v:'🦊', r:'N' },  { id:'i_panda', t:'icon', v:'🐼', r:'N' },
+  { id:'i_ramen',  t:'icon',  v:'🍜', r:'R' },  { id:'i_fire',  t:'icon', v:'🔥', r:'R' },
+  { id:'i_ghost',  t:'icon',  v:'👻', r:'R' },  { id:'i_alien', t:'icon', v:'👾', r:'SR' },
+  { id:'i_dragon', t:'icon',  v:'🐉', r:'SR' }, { id:'i_crown', t:'icon', v:'👑', r:'UR' },
+  { id:'f_cyan',   t:'frame', v:'シアンフレーム',   r:'N' },
+  { id:'f_pink',   t:'frame', v:'ピンクフレーム',   r:'R' },
+  { id:'f_gold',   t:'frame', v:'ゴールドフレーム', r:'SR' },
+  { id:'f_rainbow',t:'frame', v:'レインボーフレーム', r:'UR' },
+  { id:'t_rookie', t:'title', v:'ルーキー',       r:'N' },
+  { id:'t_puck',   t:'title', v:'パックマスター', r:'R' },
+  { id:'t_legend', t:'title', v:'ネオンの伝説',   r:'SR' },
+  { id:'t_god',    t:'title', v:'ホッケーの神',   r:'UR' },
+  { id:'g_gold',   t:'goalfx', v:'ゴール演出: ゴールド', r:'R' },
+  { id:'g_sakura', t:'goalfx', v:'ゴール演出: 桜吹雪',   r:'SR' },
+];
+const TYPE_NAMES = { icon:'アイコン', frame:'フレーム', title:'称号', goalfx:'ゴール演出' };
+function itemV(id){ const it = ITEMS.find(i => i.id === id); return it ? it.v : id; }
+function rollRarity(){ const r = Math.random()*100; return r < 1.5 ? 'UR' : r < 10 ? 'SR' : r < 40 ? 'R' : 'N'; }
+
+// ---- ガチャ ----
+const gcCoins = document.getElementById('gcCoins');
+const gcResult = document.getElementById('gcResult');
+const gcInv = document.getElementById('gcInv');
+const btnRoll = document.getElementById('btnRoll');
+document.getElementById('btnGacha').addEventListener('click', () => requireLogin(() => { gcResult.innerHTML=''; show(scrGacha); renderGacha(); }));
+document.getElementById('btnGachaBack').addEventListener('click', () => show(scrTitle));
+
+async function renderGacha(){
+  gcCoins.textContent = '🪙 ' + myProfile.coins;
+  const { data: inv } = await sb.from('inventory').select('item_id').eq('user_id', myProfile.id);
+  const owned = new Set((inv || []).map(r => r.item_id));
+  gcInv.innerHTML = owned.size ? '' : '<div class="mini">まだ何も持ってない。回そう!</div>';
+  for(const item of ITEMS){
+    if(!owned.has(item.id)) continue;
+    const equipped =
+      (item.t === 'icon'  && myProfile.icon === item.v) ||
+      (item.t === 'frame' && myProfile.frame === item.id) ||
+      (item.t === 'title' && myProfile.title === item.id) ||
+      (item.t === 'goalfx'&& myProfile.goalfx === item.id);
+    const row = document.createElement('div');
+    row.className = 'frow';
+    row.innerHTML = `<span class="nm r${item.r}">[${item.r}] ${item.t === 'icon' ? item.v + ' ' : ''}${item.v}</span><span class="mini">${TYPE_NAMES[item.t]}</span>`;
+    const eq = document.createElement('button');
+    eq.textContent = equipped ? '装備中' : '装備';
+    eq.disabled = equipped;
+    if(equipped) eq.style.opacity = .5;
+    eq.onclick = async () => {
+      const col = item.t;
+      const val = item.t === 'icon' ? item.v : item.id;
+      const { data } = await sb.from('profiles').update({ [col]: val }).eq('id', myProfile.id).select().single();
+      if(data) myProfile = data;
+      updateAuthUI(); renderGacha();
+    };
+    row.appendChild(eq);
+    gcInv.appendChild(row);
+  }
+}
+btnRoll.addEventListener('click', async () => {
+  if(myProfile.coins < 100){ gcResult.innerHTML = '<span class="err">コインが足りない!(100必要)対戦で稼ごう</span>'; return; }
+  btnRoll.disabled = true;
+  const { data: inv } = await sb.from('inventory').select('item_id').eq('user_id', myProfile.id);
+  const owned = new Set((inv || []).map(r => r.item_id));
+  const rar = rollRarity();
+  const pool = ITEMS.filter(i => i.r === rar);
+  const item = pool[Math.floor(Math.random()*pool.length)];
+  const dup = owned.has(item.id);
+  if(!dup) await sb.from('inventory').insert({ user_id: myProfile.id, item_id: item.id });
+  const { data } = await sb.from('profiles').update({ coins: myProfile.coins - 100 + (dup ? 30 : 0) }).eq('id', myProfile.id).select().single();
+  if(data) myProfile = data;
+  gcResult.innerHTML = `<span class="r${item.r}" style="font-size:22px;font-weight:800">[${item.r}] ${item.t === 'icon' ? item.v : itemV(item.id)}</span>`
+    + `<br><span class="mini">${dup ? 'かぶり! 🪙30に変換された' : 'NEW! ' + TYPE_NAMES[item.t] + 'をゲット'}</span>`;
+  updateAuthUI(); renderGacha();
+  btnRoll.disabled = false;
+});
+
+// ---- ルーレット ----
+const ROULETTE = [
+  { m: 0,   p: 62.48 }, { m: 0.5, p: 15 }, { m: 2, p: 15 },
+  { m: 5,   p: 6 },     { m: 10,  p: 1.5 }, { m: 500, p: 0.02 },
+];
+const csCoins = document.getElementById('csCoins');
+const csWheel = document.getElementById('csWheel');
+const csResult = document.getElementById('csResult');
+let curBet = 10, spinning = false;
+document.getElementById('btnCasino').addEventListener('click', () => requireLogin(() => { csResult.textContent=''; csWheel.textContent='×?'; csCoins.textContent='🪙 '+myProfile.coins; show(scrCasino); }));
+document.getElementById('btnCasinoBack').addEventListener('click', () => { if(!spinning) show(scrTitle); });
+document.querySelectorAll('#betRow button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#betRow button').forEach(x => x.classList.remove('sel'));
+  b.classList.add('sel');
+  curBet = parseInt(b.dataset.b);
+}));
+document.getElementById('btnSpin').addEventListener('click', () => {
+  if(spinning || !myProfile) return;
+  if(myProfile.coins < curBet){ csResult.textContent = 'コインが足りない!'; return; }
+  spinning = true; csResult.textContent = '';
+  // 結果を先に抽選
+  const r = Math.random()*100; let acc = 0, mult = 0;
+  for(const o of ROULETTE){ acc += o.p; if(r < acc){ mult = o.m; break; } }
+  const opts = [0, 0.5, 2, 5, 10, 500];
+  let t = 0;
+  const iv = setInterval(async () => {
+    csWheel.textContent = '×' + opts[Math.floor(Math.random()*opts.length)];
+    if(++t > 22){
+      clearInterval(iv);
+      csWheel.textContent = '×' + mult;
+      const payout = Math.floor(curBet * mult);
+      const { data } = await sb.from('profiles').update({ coins: myProfile.coins - curBet + payout }).eq('id', myProfile.id).select().single();
+      if(data) myProfile = data;
+      csResult.textContent = mult === 0 ? `😇 ハズレ... -${curBet}コイン` : mult === 500 ? `🎊🎊 ジャックポット×500!! +${payout}コイン!!` : `🎉 ×${mult}! +${payout}コイン`;
+      csCoins.textContent = '🪙 ' + myProfile.coins;
+      updateAuthUI();
+      spinning = false;
+    }
+  }, 90);
+});
+
+// ---- 共通: ログイン必須ガード ----
+function requireLogin(fn){
+  if(!sb){ alert('Supabase未設定です'); return; }
+  if(myProfile) fn();
+  else { setAuthMode('login'); show(scrAuth); }
+}
+
+// ---- DM未読 ----
+async function fetchUnread(){
+  if(!myProfile) return {};
+  const { data } = await sb.from('messages').select('sender')
+    .eq('recipient', myProfile.id).is('read_at', null).limit(200);
+  const c = {};
+  (data || []).forEach(m => c[m.sender] = (c[m.sender] || 0) + 1);
+  return c;
+}
+const btnFriendsEl = document.getElementById('btnFriends');
+async function refreshUnreadBadge(){
+  if(!myProfile) return;
+  const c = await fetchUnread();
+  const total = Object.values(c).reduce((a, b) => a + b, 0);
+  btnFriendsEl.textContent = total ? `👥 フレンド (💬${total})` : '👥 フレンド';
+}
+setInterval(refreshUnreadBadge, 10000);
 
 initAuth();
 })();
