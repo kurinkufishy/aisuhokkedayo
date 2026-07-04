@@ -102,7 +102,7 @@
     <button id="btnCasino" class="ghost">🎰 ルーレット</button>
   </div>
   <div class="sub mini" id="authState">未ログイン</div>
-  <div class="mini" style="opacity:.4">v2.1</div>
+  <div class="mini" style="opacity:.4">v2.2</div>
   <div class="sub" style="opacity:.6">
     操作 — タッチ:ドラッグ / ⌨️ <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or 矢印キー
   </div>
@@ -277,6 +277,10 @@ let phase = 'idle';
 let countdownT = 0;
 let goalFlash = 0, goalFlashColor = C_HOST;
 let particles = [];
+let rainbowT = 0; // 虹コート演出の残りフレーム (UR goalfx)
+function maybeRainbow(isMine){
+  if(isMine && myProfile && myProfile.goalfx === 'g_rainbow') rainbowT = 100;
+}
 
 // シミュレーション状態 (host座標系: p1=ホスト=下, p2=ゲスト=上)
 const sim = {
@@ -477,7 +481,7 @@ function onNetData(d){
         const [x, y] = flip(e.x, e.y);
         if(e.k === 's') spark(x, y, e.c);
         else burst(x, y, e.c);
-        if(e.k === 'b'){ goalFlash = 1; goalFlashColor = e.c; }
+        if(e.k === 'b'){ goalFlash = 1; goalFlashColor = e.c; maybeRainbow(e.c === C_GUEST); }
       }
       break;
     case 'input': // guest → host
@@ -660,6 +664,7 @@ function goal(scorer){
   const by = Math.max(PUCK_R, Math.min(H-PUCK_R, sim.puck.y));
   burst(sim.puck.x, by, c);
   pushEv('b', sim.puck.x, by, c);
+  maybeRainbow(mode === 'local' ? true : scorer === 1); // 自分(下側)が決めた時だけ
   if(p.score >= winPoints){
     phase = 'over';
     if(mode === 'host'){
@@ -722,6 +727,13 @@ function draw(view){
     ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
     goalFlash -= 0.02;
+  }
+  if(rainbowT > 0){
+    rainbowT--;
+    const hue = (100 - rainbowT) * 14;          // 発動中に色相が回る
+    const a = 0.32 * (rainbowT / 100);           // だんだんフェードアウト
+    ctx.fillStyle = `hsla(${hue % 360}, 100%, 60%, ${a})`;
+    ctx.fillRect(0, 0, W, H);
   }
 
   ctx.strokeStyle = '#1d2b52'; ctx.lineWidth = 4;
@@ -1482,6 +1494,7 @@ const ITEMS = [
   { id:'t_god',    t:'title', v:'ホッケーの神',   r:'UR' },
   { id:'g_gold',   t:'goalfx', v:'ゴール演出: ゴールド', r:'R' },
   { id:'g_sakura', t:'goalfx', v:'ゴール演出: 桜吹雪',   r:'SR' },
+  { id:'g_rainbow',t:'goalfx', v:'ゴール演出: 虹コート', r:'UR' },
 ];
 const TYPE_NAMES = { icon:'アイコン', frame:'フレーム', title:'称号', goalfx:'ゴール演出' };
 function itemV(id){ const it = ITEMS.find(i => i.id === id); return it ? it.v : id; }
