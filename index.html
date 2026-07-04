@@ -102,7 +102,7 @@
     <button id="btnCasino" class="ghost">🎰 ルーレット</button>
   </div>
   <div class="sub mini" id="authState">未ログイン</div>
-  <div class="mini" style="opacity:.4">v2.2</div>
+  <div class="mini" style="opacity:.4">v2.3</div>
   <div class="sub" style="opacity:.6">
     操作 — タッチ:ドラッグ / ⌨️ <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or 矢印キー
   </div>
@@ -278,9 +278,6 @@ let countdownT = 0;
 let goalFlash = 0, goalFlashColor = C_HOST;
 let particles = [];
 let rainbowT = 0; // 虹コート演出の残りフレーム (UR goalfx)
-function maybeRainbow(isMine){
-  if(isMine && myProfile && myProfile.goalfx === 'g_rainbow') rainbowT = 100;
-}
 
 // シミュレーション状態 (host座標系: p1=ホスト=下, p2=ゲスト=上)
 const sim = {
@@ -301,6 +298,7 @@ let peer = null, conn = null;
 let lastPing = 0, pingMs = null;
 let pendingInviteTo = null; // 対戦に誘う相手のユーザーID (ルーム作成完了時に招待送信)
 let opponentPid = null, opponentName = null; // 対戦相手のプロフィール (戦績記録用)
+let opponentGfx = ''; // 相手の装備ゴール演出
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const PEER_PREFIX = 'neonhockey-v1-';
 
@@ -372,7 +370,7 @@ function createRoom(){
       setupConn();
       conn.on('open', () => {
         mode = 'host';
-        send({ t:'hello', winPoints, pid: myProfile ? myProfile.id : null, pname: myProfile ? myProfile.username : null });
+        send({ t:'hello', winPoints, pid: myProfile ? myProfile.id : null, pname: myProfile ? myProfile.username : null, gfx: myProfile ? myProfile.goalfx : '' });
         startMatch();
       });
     });
@@ -464,11 +462,13 @@ function onNetData(d){
       mode = 'guest';
       opponentPid = d.pid || null;
       opponentName = d.pname || null;
-      send({ t:'iam', pid: myProfile ? myProfile.id : null, pname: myProfile ? myProfile.username : null });
+      opponentGfx = d.gfx || '';
+      send({ t:'iam', pid: myProfile ? myProfile.id : null, pname: myProfile ? myProfile.username : null, gfx: myProfile ? myProfile.goalfx : '' });
       break;
     case 'iam': // guest → host (プロフィール交換)
       opponentPid = d.pid || null;
       opponentName = d.pname || null;
+      opponentGfx = d.gfx || '';
       break;
     case 'state': // host → guest
       netState = d;
@@ -480,8 +480,8 @@ function onNetData(d){
       for(const e of d.evs){
         const [x, y] = flip(e.x, e.y);
         if(e.k === 's') spark(x, y, e.c);
-        else burst(x, y, e.c);
-        if(e.k === 'b'){ goalFlash = 1; goalFlashColor = e.c; maybeRainbow(e.c === C_GUEST); }
+        else burst(x, y, e.c, e.f);
+        if(e.k === 'b'){ goalFlash = 1; goalFlashColor = e.c; }
       }
       break;
     case 'input': // guest → host
@@ -606,7 +606,7 @@ function readMyInput(target, keyset){
 
 // ===== イベントバッファ (ホスト→ゲスト演出同期) =====
 let evBuf = [];
-function pushEv(k, x, y, c){ evBuf.push({k, x, y, c}); }
+function pushEv(k, x, y, c, f){ evBuf.push({k, x, y, c, f}); }
 function flushEv(){
   if(evBuf.length && mode === 'host'){ send({ t:'ev', evs: evBuf }); }
   evBuf = [];
@@ -661,10 +661,13 @@ function goal(scorer){
   const c = scorer === 1 ? C_HOST : C_GUEST;
   p.score++;
   goalFlash = 1; goalFlashColor = c;
+  // 得点者の装備演出を使う (host: 自分=1 / 相手=2, cpu: CPUに演出なし, local: 装備者の画面)
+  const fx = mode === 'local' ? (myProfile ? myProfile.goalfx : '')
+    : scorer === 1 ? (myProfile ? myProfile.goalfx : '')
+    : (mode === 'host' ? opponentGfx : '');
   const by = Math.max(PUCK_R, Math.min(H-PUCK_R, sim.puck.y));
-  burst(sim.puck.x, by, c);
-  pushEv('b', sim.puck.x, by, c);
-  maybeRainbow(mode === 'local' ? true : scorer === 1); // 自分(下側)が決めた時だけ
+  burst(sim.puck.x, by, c, fx);
+  pushEv('b', sim.puck.x, by, c, fx);
   if(p.score >= winPoints){
     phase = 'over';
     if(mode === 'host'){
@@ -702,11 +705,11 @@ function startMatch(){
 function spark(x, y, color){
   for(let i=0;i<6;i++) particles.push({x, y, vx:(Math.random()-.5)*8, vy:(Math.random()-.5)*8, life:20, color});
 }
-function burst(x, y, color){
+function burst(x, y, color, fx){
   let palette = null;
-  const fx = myProfile ? myProfile.goalfx : '';
   if(fx === 'g_gold') palette = ['#ffd700', '#ffec8b', '#ffa500'];
   if(fx === 'g_sakura') palette = ['#ffb7d5', '#ff8fc0', '#ffffff'];
+  if(fx === 'g_rainbow') rainbowT = 100;
   for(let i=0;i<40;i++){
     const a = Math.random()*Math.PI*2, s = 2+Math.random()*10;
     const c = palette ? palette[Math.floor(Math.random()*palette.length)] : color;
